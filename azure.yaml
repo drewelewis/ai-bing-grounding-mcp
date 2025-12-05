@@ -1,0 +1,50 @@
+name: bing-grounding-api
+metadata:
+  template: bing-grounding-api@0.0.1-beta
+
+# Root-level hooks run for ALL azd commands
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: python scripts/preprovision_check_resource_group.py ; python scripts/preprovision_register_providers.py
+      continueOnError: false
+      interactive: true
+    posix:
+      shell: sh
+      run: python scripts/preprovision_check_resource_group.py && python scripts/preprovision_register_providers.py
+      continueOnError: false
+      interactive: true
+  postprovision:
+    windows:
+      shell: pwsh
+      run: python scripts/postprovision_create_agents.py
+      continueOnError: false
+      interactive: false
+    posix:
+      shell: sh
+      run: python scripts/postprovision_create_agents.py
+      continueOnError: false
+      interactive: false
+
+services:
+  api:
+    project: .
+    language: py
+    host: containerapp
+    hooks:
+      postdeploy:
+        windows:
+          shell: pwsh
+          run: python scripts/postdeploy_update_container_apps.py
+          continueOnError: false
+          interactive: false
+        posix:
+          shell: sh
+          run: python scripts/postdeploy_update_container_apps.py
+          continueOnError: false
+          interactive: false
+
+# Default environment (optional - azd will prompt if not set)
+# You can override this by setting AZURE_ENV_NAME environment variable
+# or using: azd env select <env-name>

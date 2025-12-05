@@ -1,0 +1,13 @@
+services:
+  bing-grounding-api:
+    image: "drewl/bing-grounding-api:latest"
+    ports:
+    - "80:80"
+    - "443:443"
+    - "8989:8989"
+    env_file:
+      - .env
+    environment:
+      - AZURE_AI_PROJECT_ENDPOINT=${AZURE_AI_PROJECT_ENDPOINT}
+      - AZURE_AI_AGENT_ID=${AZURE_AI_AGENT_ID}
+

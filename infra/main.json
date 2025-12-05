@@ -1,0 +1,704 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.36.1.42791",
+      "templateHash": "3767866983062818451"
+    }
+  },
+  "parameters": {
+    "environmentName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "metadata": {
+        "description": "Name of the environment that can be used as part of naming resource convention"
+      }
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "Primary location for all resources"
+      }
+    },
+    "resourceGroupName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the resource group. If empty, a name will be generated."
+      }
+    },
+    "apimServiceName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the API Management service. If empty, a name will be generated."
+      }
+    },
+    "foundryName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the Microsoft Foundry resource. If empty, a name will be generated."
+      }
+    },
+    "projectName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the Foundry project. If empty, a name will be generated."
+      }
+    },
+    "containerAppEnvName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the Container App Environment. If empty, a name will be generated."
+      }
+    },
+    "containerAppName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the Container App. If empty, a name will be generated."
+      }
+    },
+    "containerRegistryName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the Container Registry. If empty, a name will be generated."
+      }
+    },
+    "containerImage": {
+      "type": "string",
+      "defaultValue": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+      "metadata": {
+        "description": "Container image to deploy. If empty, uses default."
+      }
+    },
+    "containerAppInstances": {
+      "type": "int",
+      "defaultValue": 3,
+      "minValue": 1,
+      "maxValue": 10,
+      "metadata": {
+        "description": "Number of Container App instances to deploy for load balancing"
+      }
+    }
+  },
+  "variables": {
+    "$fxv#0": {
+      "resourcesResourceGroups": "rg-",
+      "apiManagementService": "apim-",
+      "cognitiveServicesAccounts": "ai-",
+      "appManagedEnvironments": "cae-",
+      "appContainerApps": "ca-",
+      "containerRegistryRegistries": "acr"
+    },
+    "abbrs": "[variables('$fxv#0')]",
+    "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]",
+    "tags": {
+      "azd-env-name": "[parameters('environmentName')]"
+    },
+    "finalResourceGroupName": "[if(not(empty(parameters('resourceGroupName'))), parameters('resourceGroupName'), format('{0}bing-grounding-mcp-{1}', variables('abbrs').resourcesResourceGroups, parameters('environmentName')))]",
+    "finalApimName": "[if(not(empty(parameters('apimServiceName'))), parameters('apimServiceName'), format('{0}{1}', variables('abbrs').apiManagementService, variables('resourceToken')))]",
+    "finalFoundryName": "[if(not(empty(parameters('foundryName'))), parameters('foundryName'), format('{0}foundry-{1}', variables('abbrs').cognitiveServicesAccounts, variables('resourceToken')))]",
+    "finalProjectName": "[if(not(empty(parameters('projectName'))), parameters('projectName'), format('{0}proj-{1}', variables('abbrs').cognitiveServicesAccounts, variables('resourceToken')))]",
+    "finalContainerAppEnvName": "[if(not(empty(parameters('containerAppEnvName'))), parameters('containerAppEnvName'), format('{0}{1}', variables('abbrs').appManagedEnvironments, variables('resourceToken')))]",
+    "finalContainerAppName": "[if(not(empty(parameters('containerAppName'))), parameters('containerAppName'), format('{0}{1}', variables('abbrs').appContainerApps, variables('resourceToken')))]",
+    "finalContainerRegistryName": "[if(not(empty(parameters('containerRegistryName'))), parameters('containerRegistryName'), format('{0}{1}', variables('abbrs').containerRegistryRegistries, variables('resourceToken')))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2021-04-01",
+      "name": "[variables('finalResourceGroupName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]"
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "resources",
+      "resourceGroup": "[variables('finalResourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          },
+          "apimServiceName": {
+            "value": "[variables('finalApimName')]"
+          },
+          "foundryName": {
+            "value": "[variables('finalFoundryName')]"
+          },
+          "projectName": {
+            "value": "[variables('finalProjectName')]"
+          },
+          "containerAppEnvName": {
+            "value": "[variables('finalContainerAppEnvName')]"
+          },
+          "containerAppName": {
+            "value": "[variables('finalContainerAppName')]"
+          },
+          "containerRegistryName": {
+            "value": "[variables('finalContainerRegistryName')]"
+          },
+          "containerImage": {
+            "value": "[parameters('containerImage')]"
+          },
+          "containerAppInstances": {
+            "value": "[parameters('containerAppInstances')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.36.1.42791",
+              "templateHash": "5094663359398514237"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object"
+            },
+            "apimServiceName": {
+              "type": "string"
+            },
+            "foundryName": {
+              "type": "string"
+            },
+            "projectName": {
+              "type": "string"
+            },
+            "containerAppEnvName": {
+              "type": "string"
+            },
+            "containerAppName": {
+              "type": "string"
+            },
+            "containerRegistryName": {
+              "type": "string"
+            },
+            "containerImage": {
+              "type": "string"
+            },
+            "containerAppInstances": {
+              "type": "int"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-01-01",
+              "name": "[format('st{0}', uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "accessTier": "Hot",
+                "supportsHttpsTrafficOnly": true,
+                "minimumTlsVersion": "TLS1_2"
+              }
+            },
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2023-07-01",
+              "name": "[format('kv{0}', uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "family": "A",
+                  "name": "standard"
+                },
+                "tenantId": "[subscription().tenantId]",
+                "enableRbacAuthorization": true,
+                "enabledForDeployment": false,
+                "enabledForDiskEncryption": false,
+                "enabledForTemplateDeployment": false
+              }
+            },
+            {
+              "type": "Microsoft.Insights/components",
+              "apiVersion": "2020-02-02",
+              "name": "[format('appi{0}', uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "kind": "web",
+              "properties": {
+                "Application_Type": "web",
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2022-10-01",
+              "name": "[format('log{0}', uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "name": "PerGB2018"
+                },
+                "retentionInDays": 30
+              }
+            },
+            {
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2023-07-01",
+              "name": "[parameters('containerRegistryName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Basic"
+              },
+              "properties": {
+                "adminUserEnabled": true,
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2025-04-01-preview",
+              "name": "[parameters('foundryName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "sku": {
+                "name": "S0"
+              },
+              "kind": "AIServices",
+              "properties": {
+                "allowProjectManagement": true,
+                "customSubDomainName": "[parameters('foundryName')]",
+                "disableLocalAuth": true,
+                "publicNetworkAccess": "Enabled"
+              }
+            },
+            {
+              "type": "Microsoft.CognitiveServices/accounts/projects",
+              "apiVersion": "2025-04-01-preview",
+              "name": "[format('{0}/{1}', parameters('foundryName'), parameters('projectName'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {},
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.CognitiveServices/accounts/deployments",
+              "apiVersion": "2024-10-01",
+              "name": "[format('{0}/{1}', parameters('foundryName'), 'gpt-4o')]",
+              "sku": {
+                "name": "GlobalStandard",
+                "capacity": 10
+              },
+              "properties": {
+                "model": {
+                  "format": "OpenAI",
+                  "name": "gpt-4o",
+                  "version": "2024-08-06"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2023-05-01",
+              "name": "[parameters('containerAppEnvName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "appLogsConfiguration": {
+                  "destination": "log-analytics",
+                  "logAnalyticsConfiguration": {
+                    "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', format('log{0}', uniqueString(resourceGroup().id))), '2022-10-01').customerId]",
+                    "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', format('log{0}', uniqueString(resourceGroup().id))), '2022-10-01').primarySharedKey]"
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', format('log{0}', uniqueString(resourceGroup().id)))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2023-05-01",
+              "name": "[parameters('containerAppName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(parameters('tags'), createObject('azd-service-name', 'api'))]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppEnvName'))]",
+                "configuration": {
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 8989,
+                    "transport": "auto"
+                  },
+                  "registries": [
+                    {
+                      "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2023-07-01').loginServer]",
+                      "username": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2023-07-01').username]",
+                      "passwordSecretRef": "registry-password"
+                    }
+                  ],
+                  "secrets": [
+                    {
+                      "name": "registry-password",
+                      "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2023-07-01').passwords[0].value]"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "bing-grounding-api",
+                      "image": "[parameters('containerImage')]",
+                      "resources": {
+                        "cpu": "[json('0.5')]",
+                        "memory": "1Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "AZURE_AI_PROJECT_ENDPOINT",
+                          "value": "[format('https://{0}', reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryName')), '2025-04-01-preview').endpoint)]"
+                        },
+                        {
+                          "name": "AZURE_AI_PROJECT_NAME",
+                          "value": "[parameters('projectName')]"
+                        }
+                      ]
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppEnvName'))]",
+                "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryName'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName'))]"
+              ]
+            },
+            {
+              "copy": {
+                "name": "containerAppReplicas",
+                "count": "[length(range(1, sub(parameters('containerAppInstances'), 1)))]"
+              },
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}-{1}', parameters('containerAppName'), range(1, sub(parameters('containerAppInstances'), 1))[copyIndex()])]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppEnvName'))]",
+                "configuration": {
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 8989,
+                    "transport": "auto"
+                  },
+                  "registries": [
+                    {
+                      "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2023-07-01').loginServer]",
+                      "username": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2023-07-01').username]",
+                      "passwordSecretRef": "registry-password"
+                    }
+                  ],
+                  "secrets": [
+                    {
+                      "name": "registry-password",
+                      "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2023-07-01').passwords[0].value]"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "bing-grounding-api",
+                      "image": "[parameters('containerImage')]",
+                      "resources": {
+                        "cpu": "[json('0.5')]",
+                        "memory": "1Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "AZURE_AI_PROJECT_ENDPOINT",
+                          "value": "[format('https://{0}', reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryName')), '2025-04-01-preview').endpoint)]"
+                        },
+                        {
+                          "name": "AZURE_AI_PROJECT_NAME",
+                          "value": "[parameters('projectName')]"
+                        }
+                      ]
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppEnvName'))]",
+                "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryName'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[parameters('apimServiceName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Developer",
+                "capacity": 1
+              },
+              "properties": {
+                "publisherEmail": "admin@contoso.com",
+                "publisherName": "Contoso"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              }
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}', parameters('apimServiceName'), 'bing-grounding-api')]",
+              "properties": {
+                "displayName": "Bing Grounding API",
+                "apiRevision": "1",
+                "subscriptionRequired": true,
+                "path": "bing-grounding",
+                "protocols": [
+                  "https"
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apimServiceName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimServiceName'), 'bing-grounding-api', 'health')]",
+              "properties": {
+                "displayName": "Health Check",
+                "method": "GET",
+                "urlTemplate": "/health",
+                "description": "Health check endpoint"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimServiceName'), 'bing-grounding-api')]"
+              ]
+            },
+            {
+              "type": "Microsoft.ApiManagement/service/apis/operations",
+              "apiVersion": "2023-05-01-preview",
+              "name": "[format('{0}/{1}/{2}', parameters('apimServiceName'), 'bing-grounding-api', 'bing-grounding')]",
+              "properties": {
+                "displayName": "Bing Grounding",
+                "method": "POST",
+                "urlTemplate": "/bing-grounding",
+                "description": "Query with Bing grounding and citations",
+                "request": {
+                  "queryParameters": [
+                    {
+                      "name": "query",
+                      "type": "string",
+                      "required": true,
+                      "description": "The query to process"
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apimServiceName'), 'bing-grounding-api')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}/projects/{1}', parameters('foundryName'), parameters('projectName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName')), resourceId('Microsoft.App/containerApps', parameters('containerAppName')), 'AzureAIDeveloper')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee')]",
+                "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2023-05-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/containerApps', parameters('containerAppName'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName'))]"
+              ]
+            },
+            {
+              "copy": {
+                "name": "roleAssignmentReplicas",
+                "count": "[length(range(1, sub(parameters('containerAppInstances'), 1)))]"
+              },
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}/projects/{1}', parameters('foundryName'), parameters('projectName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName')), resourceId('Microsoft.App/containerApps', format('{0}-{1}', parameters('containerAppName'), range(1, sub(parameters('containerAppInstances'), 1))[sub(range(1, sub(parameters('containerAppInstances'), 1))[copyIndex()], 1)])), 'AzureAIDeveloper')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee')]",
+                "principalId": "[reference(resourceId('Microsoft.App/containerApps', format('{0}-{1}', parameters('containerAppName'), range(1, sub(parameters('containerAppInstances'), 1))[sub(range(1, sub(parameters('containerAppInstances'), 1))[copyIndex()], 1)])), '2023-05-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/containerApps', format('{0}-{1}', parameters('containerAppName'), range(1, sub(parameters('containerAppInstances'), 1))[sub(range(1, sub(parameters('containerAppInstances'), 1))[copyIndex()], 1)]))]",
+                "[resourceId('Microsoft.App/containerApps', format('{0}-{1}', parameters('containerAppName'), range(1, sub(parameters('containerAppInstances'), 1))[sub(range(1, sub(parameters('containerAppInstances'), 1))[copyIndex()], 1)]))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "apimName": {
+              "type": "string",
+              "value": "[parameters('apimServiceName')]"
+            },
+            "apimGatewayUrl": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ApiManagement/service', parameters('apimServiceName')), '2023-05-01-preview').gatewayUrl]"
+            },
+            "foundryName": {
+              "type": "string",
+              "value": "[parameters('foundryName')]"
+            },
+            "projectName": {
+              "type": "string",
+              "value": "[parameters('projectName')]"
+            },
+            "projectEndpoint": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryName')), '2025-04-01-preview').endpoint)]"
+            },
+            "projectResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName'))]"
+            },
+            "gpt4oDeploymentName": {
+              "type": "string",
+              "value": "gpt-4o"
+            },
+            "containerRegistryName": {
+              "type": "string",
+              "value": "[parameters('containerRegistryName')]"
+            },
+            "containerRegistryEndpoint": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2023-07-01').loginServer]"
+            },
+            "containerAppEndpoint": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2023-05-01').configuration.ingress.fqdn]"
+            },
+            "containerAppName": {
+              "type": "string",
+              "value": "[parameters('containerAppName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('finalResourceGroupName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "AZURE_LOCATION": {
+      "type": "string",
+      "value": "[parameters('location')]"
+    },
+    "AZURE_RESOURCE_GROUP": {
+      "type": "string",
+      "value": "[variables('finalResourceGroupName')]"
+    },
+    "AZURE_APIM_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.apimName.value]"
+    },
+    "AZURE_APIM_GATEWAY_URL": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.apimGatewayUrl.value]"
+    },
+    "AZURE_FOUNDRY_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.foundryName.value]"
+    },
+    "AZURE_AI_PROJECT_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.projectName.value]"
+    },
+    "AZURE_AI_PROJECT_ENDPOINT": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.projectEndpoint.value]"
+    },
+    "AZURE_AI_PROJECT_RESOURCE_ID": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.projectResourceId.value]"
+    },
+    "AZURE_OPENAI_MODEL_GPT4O": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.gpt4oDeploymentName.value]"
+    },
+    "AZURE_CONTAINER_REGISTRY_ENDPOINT": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.containerRegistryEndpoint.value]"
+    },
+    "AZURE_CONTAINER_REGISTRY_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.containerRegistryName.value]"
+    },
+    "AZURE_CONTAINER_APP_ENDPOINT": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.containerAppEndpoint.value]"
+    },
+    "AZURE_CONTAINER_APP_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.containerAppName.value]"
+    }
+  }
+}

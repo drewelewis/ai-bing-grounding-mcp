@@ -1,0 +1,463 @@
+param location string
+param tags object
+param apimServiceName string
+param aiHubName string
+param aiProjectName string
+param containerAppEnvName string
+param containerAppName string
+param containerRegistryName string
+param containerImage string
+param containerAppInstances int
+
+// Storage Account for AI Hub
+resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: 'st${uniqueString(resourceGroup().id)}'
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    accessTier: 'Hot'
+    supportsHttpsTrafficOnly: true
+    minimumTlsVersion: 'TLS1_2'
+  }
+}
+
+// Key Vault for AI Hub
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: 'kv${uniqueString(resourceGroup().id)}'
+  location: location
+  tags: tags
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enabledForDeployment: false
+    enabledForDiskEncryption: false
+    enabledForTemplateDeployment: false
+  }
+}
+
+// Application Insights
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: 'appi${uniqueString(resourceGroup().id)}'
+  location: location
+  tags: tags
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    publicNetworkAccessForIngestion: 'Enabled'
+    publicNetworkAccessForQuery: 'Enabled'
+  }
+}
+
+// Log Analytics Workspace
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
+  name: 'log${uniqueString(resourceGroup().id)}'
+  location: location
+  tags: tags
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+// Container Registry
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+  name: containerRegistryName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: true
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Bing Grounding Search Resource - Created manually via Azure Portal
+// Note: Bicep deployment of Bing Grounding resources currently experiencing issues
+// Create via: https://portal.azure.com/#create/Microsoft.BingGroundingSearch
+// Then manually create connection in AI Hub
+// resource bingGrounding 'Microsoft.Bing/accounts@2025-05-01-preview' = {
+//   name: 'bing-${uniqueString(resourceGroup().id)}'
+//   location: 'global'
+//   tags: tags
+//   sku: {
+//     name: 'S1'
+//   }
+//   kind: 'Bing.Grounding'
+// }
+
+// Azure OpenAI
+resource openAI 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
+  name: 'oai-${uniqueString(resourceGroup().id)}'
+  location: location
+  tags: tags
+  kind: 'OpenAI'
+  sku: {
+    name: 'S0'
+  }
+  properties: {
+    customSubDomainName: 'oai-${uniqueString(resourceGroup().id)}'
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Deploy GPT-4o model for agents (supports Bing grounding)
+resource gpt4oDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-05-01' = {
+  parent: openAI
+  name: 'gpt-4o'
+  sku: {
+    name: 'Standard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4o'
+      version: '2024-08-06'
+    }
+  }
+}
+
+// GPT-4 (0613) deprecated as of June 6, 2025 - removed
+
+// GPT-3.5 Turbo (0613) deprecated - removed
+
+// AI Hub (AI Foundry Hub)
+resource aiHub 'Microsoft.MachineLearningServices/workspaces@2024-04-01' = {
+  name: aiHubName
+  location: location
+  tags: tags
+  kind: 'Hub'
+  sku: {
+    name: 'Basic'
+    tier: 'Basic'
+  }
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    friendlyName: aiHubName
+    storageAccount: storage.id
+    keyVault: keyVault.id
+    applicationInsights: appInsights.id
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Connect OpenAI to AI Hub
+resource openAIConnection 'Microsoft.MachineLearningServices/workspaces/connections@2024-04-01' = {
+  parent: aiHub
+  name: 'aoai-connection'
+  properties: {
+    category: 'AzureOpenAI'
+    target: openAI.properties.endpoint
+    authType: 'AAD'
+    isSharedToAll: true
+    metadata: {
+      ApiVersion: '2023-07-01-preview'
+      ApiType: 'azure'
+      ResourceId: openAI.id
+    }
+  }
+}
+
+// Connect Bing Grounding to AI Hub
+// Note: Bing connection creation currently commented out - will be created manually or via SDK
+// resource bingConnection 'Microsoft.MachineLearningServices/workspaces/connections@2024-04-01' = {
+//   parent: aiHub
+//   name: 'bing-connection'
+//   properties: {
+//     category: 'BingGrounding'
+//     target: bingGrounding.id
+//     authType: 'AAD'
+//     isSharedToAll: true
+//     metadata: {
+//       ResourceId: bingGrounding.id
+//     }
+//   }
+// }
+
+// AI Project (AI Foundry Project)
+resource aiProject 'Microsoft.MachineLearningServices/workspaces@2024-04-01' = {
+  name: aiProjectName
+  location: location
+  tags: tags
+  kind: 'Project'
+  sku: {
+    name: 'Basic'
+    tier: 'Basic'
+  }
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    friendlyName: aiProjectName
+    hubResourceId: aiHub.id
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Container App Environment
+resource containerAppEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
+  name: containerAppEnvName
+  location: location
+  tags: tags
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalytics.properties.customerId
+        sharedKey: logAnalytics.listKeys().primarySharedKey
+      }
+    }
+  }
+}
+
+// Primary Container App (azd deploys to this one)
+resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
+  name: containerAppName
+  location: location
+  tags: union(tags, {
+    'azd-service-name': 'api'
+  })
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    managedEnvironmentId: containerAppEnv.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 8989
+        transport: 'auto'
+      }
+      registries: [
+        {
+          server: containerRegistry.properties.loginServer
+          username: containerRegistry.listCredentials().username
+          passwordSecretRef: 'registry-password'
+        }
+      ]
+      secrets: [
+        {
+          name: 'registry-password'
+          value: containerRegistry.listCredentials().passwords[0].value
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'bing-grounding-api'
+          image: containerImage
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+          env: [
+            {
+              name: 'AZURE_AI_PROJECT_ENDPOINT'
+              value: '${location}.api.azureml.ms;${subscription().subscriptionId};${resourceGroup().name};${aiProject.name}'
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
+      }
+    }
+  }
+}
+
+// Additional Container App instances for load balancing (1 and 2)
+resource containerAppReplicas 'Microsoft.App/containerApps@2023-05-01' = [for i in range(1, containerAppInstances - 1): {
+  name: '${containerAppName}-${i}'
+  location: location
+  tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    managedEnvironmentId: containerAppEnv.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 8989
+        transport: 'auto'
+      }
+      registries: [
+        {
+          server: containerRegistry.properties.loginServer
+          username: containerRegistry.listCredentials().username
+          passwordSecretRef: 'registry-password'
+        }
+      ]
+      secrets: [
+        {
+          name: 'registry-password'
+          value: containerRegistry.listCredentials().passwords[0].value
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'bing-grounding-api'
+          image: containerImage
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+          env: [
+            {
+              name: 'AZURE_AI_PROJECT_ENDPOINT'
+              value: '${location}.api.azureml.ms;${subscription().subscriptionId};${resourceGroup().name};${aiProject.name}'
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
+      }
+    }
+  }
+}]
+
+// API Management Service
+resource apim 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
+  name: apimServiceName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Developer'
+    capacity: 1
+  }
+  properties: {
+    publisherEmail: 'admin@contoso.com'
+    publisherName: 'Contoso'
+  }
+  identity: {
+    type: 'SystemAssigned'
+  }
+}
+
+// API in APIM
+resource api 'Microsoft.ApiManagement/service/apis@2023-05-01-preview' = {
+  parent: apim
+  name: 'bing-grounding-api'
+  properties: {
+    displayName: 'Bing Grounding API'
+    apiRevision: '1'
+    subscriptionRequired: true
+    path: 'bing-grounding'
+    protocols: ['https']
+  }
+}
+
+// Health endpoint operation
+resource healthOperation 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  parent: api
+  name: 'health'
+  properties: {
+    displayName: 'Health Check'
+    method: 'GET'
+    urlTemplate: '/health'
+    description: 'Health check endpoint'
+  }
+}
+
+// Bing grounding endpoint operation
+resource bingGroundingOperation 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  parent: api
+  name: 'bing-grounding'
+  properties: {
+    displayName: 'Bing Grounding'
+    method: 'POST'
+    urlTemplate: '/bing-grounding'
+    description: 'Query with Bing grounding and citations'
+    request: {
+      queryParameters: [
+        {
+          name: 'query'
+          type: 'string'
+          required: true
+          description: 'The query to process'
+        }
+      ]
+    }
+  }
+}
+
+// Grant primary Container App managed identity access to AI Project
+resource roleAssignmentPrimary 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aiProject.id, containerApp.id, 'Contributor')
+  scope: aiProject
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c') // Contributor
+    principalId: containerApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Grant additional Container Apps managed identity access to AI Project
+resource roleAssignmentReplicas 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for i in range(1, containerAppInstances - 1): {
+  name: guid(aiProject.id, containerAppReplicas[i - 1].id, 'Contributor')
+  scope: aiProject
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c') // Contributor
+    principalId: containerAppReplicas[i - 1].identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}]
+
+// Grant AI Project managed identity access to Azure OpenAI
+// Role: Azure AI Developer (64702f94-c441-49e6-a78b-ef80e0188fee)
+resource aiProjectOpenAIRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(openAI.id, aiProject.id, 'AzureAIDeveloper')
+  scope: openAI
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee') // Azure AI Developer
+    principalId: aiProject.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Grant AI Hub managed identity access to Azure OpenAI (for connections)
+resource aiHubOpenAIRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(openAI.id, aiHub.id, 'AzureAIDeveloper')
+  scope: openAI
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee') // Azure AI Developer
+    principalId: aiHub.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Bing Grounding role assignments not needed - built-in tool
+
+// Outputs
+output apimName string = apim.name
+output apimGatewayUrl string = apim.properties.gatewayUrl
+output aiHubName string = aiHub.name
+output aiProjectName string = aiProject.name
+// AI Project endpoint - connection string format for hub-based projects (SDK beta10)
+output aiProjectEndpoint string = '${location}.api.azureml.ms;${subscription().subscriptionId};${resourceGroup().name};${aiProject.name}'
+output openAIName string = openAI.name
+output openAIEndpoint string = openAI.properties.endpoint
+output containerRegistryName string = containerRegistry.name
+output containerRegistryEndpoint string = containerRegistry.properties.loginServer
+output containerAppEndpoint string = containerApp.properties.configuration.ingress.fqdn
+output containerAppName string = containerAppName
