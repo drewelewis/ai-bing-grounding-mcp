@@ -4,3 +4,7 @@ pydantic
 uvicorn[standard]
 azure-ai-projects
 azure-identity
+httpx
+python-dotenv
+semantic-kernel>=1.0.0
+mcp>=1.0.0

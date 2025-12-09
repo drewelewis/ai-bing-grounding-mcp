@@ -36,14 +36,14 @@ services:
       postdeploy:
         windows:
           shell: pwsh
-          run: python scripts/postdeploy_update_container_apps.py
+          run: python scripts/postdeploy_update_container_apps.py ; python scripts/postprovision_configure_mcp.py
           continueOnError: false
-          interactive: false
+          interactive: true
         posix:
           shell: sh
-          run: python scripts/postdeploy_update_container_apps.py
+          run: python scripts/postdeploy_update_container_apps.py && python scripts/postprovision_configure_mcp.py
           continueOnError: false
-          interactive: false
+          interactive: true
 
 # Default environment (optional - azd will prompt if not set)
 # You can override this by setting AZURE_ENV_NAME environment variable

@@ -44,70 +44,518 @@ Your API will be available at the endpoint shown in the output.
 
 📚 **For detailed provisioning steps**, see [Deployment to Azure](#deployment-to-azure) below.
 
+> **💡 MCP Server via APIM**: Azure API Management natively converts your REST API into a Model Context Protocol (MCP) server. MCP clients (like GitHub Copilot, Semantic Kernel, or Azure OpenAI Responses API) connect to APIM's MCP endpoint via HTTP/SSE transport to access your API as standardized tools. See [APIM as MCP Server](docs/APIM_MCP_SERVER.md) for details.
+> 
+> **⚠️ Manual Step Required After Deployment**: The `azd deploy` postdeploy hook will display instructions for creating the MCP server in APIM Portal (1-2 minutes). This step is currently manual because MCP server resources are not yet available in ARM/Bicep templates.
+
 ---  
 
 ## Architecture
 
-### Production Architecture with APIM
+### Current Architecture: Single Project with Agent Pool
 
-```
-┌──────────────────────────────────────────┐
-│         [CLIENT APPLICATIONS]            │
-│     (Web Apps, APIs, MCP Clients)       │
-└─────────────────┬────────────────────────┘
-                  │
-                  ▼
-┌──────────────────────────────────────────┐
-│      [AZURE API MANAGEMENT]              │
-│  • Load Balancing                        │
-│  • Circuit Breaker                       │
-│  • Session Affinity                      │
-│  • Health-Based Routing                  │
-└─────────────────┬────────────────────────┘
-                  │
-         ┌────────┼────────┐
-         │        │        │
-         ▼        ▼        ▼
-    ┌────────┐ ┌────────┐ ... (N instances)
-    │ ✅ [OK] │ │ ❌ [OUT]│
-    │ API #1 │ │ API #2 │
-    │ Active │ │ Circuit│
-    └────┬───┘ └────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│    [AZURE AI AGENT SERVICE]             │
-│  • Bing Grounding                       │
-│  • Citation Extraction                  │
-│  • Thread Management                    │
-└─────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph External["External Clients"]
+        Client[LLM Suite / MCP Client]
+    end
+    
+    subgraph APIM["Azure API Management"]
+        Gateway[API Gateway<br/>• Circuit Breaker<br/>• Rate Limiting<br/>• Session Affinity]
+    end
+    
+    subgraph ContainerApps["Container Apps Environment"]
+        CA1[Container App 1<br/>12 Agent Endpoints]
+        CA2[Container App 2<br/>12 Agent Endpoints]
+        CA3[Container App 3<br/>12 Agent Endpoints]
+    end
+    
+    subgraph Foundry["Azure AI Foundry (Single Project)"]
+        Project[AI Project]
+        GPT4O[GPT-4o Deployment<br/>10K TPM Capacity]
+        subgraph Agents["Agent Pool (12 Agents)"]
+            Agent1[Agent 1]
+            Agent2[Agent 2]
+            Agent12[Agent 12]
+        end
+        Bing[Bing Grounding<br/>Connection]
+    end
+    
+    Client -->|HTTPS Requests| Gateway
+    Gateway -->|Load Balance| CA1
+    Gateway -->|Load Balance| CA2
+    Gateway -->|Load Balance| CA3
+    
+    CA1 & CA2 & CA3 -->|Managed Identity| Project
+    Project --> Agents
+    Agent1 & Agent2 & Agent12 -->|Use| GPT4O
+    Agent1 & Agent2 & Agent12 -->|Search| Bing
+    
+    style Gateway fill:#0078d4,color:#fff
+    style CA1 fill:#00bcf2,color:#000
+    style CA2 fill:#00bcf2,color:#000
+    style CA3 fill:#00bcf2,color:#000
+    style Project fill:#50e6ff,color:#000
+    style GPT4O fill:#ff6b6b,color:#fff
+    style Bing fill:#00b294,color:#fff
 ```
 
-### Simple Architecture (No APIM)
+**Characteristics:**
+- ✅ **TPM Capacity:** 10K TPM (shared across all agents)
+- ✅ **Agent Pool:** 12 agents for load distribution
+- ✅ **High Availability:** 3 Container App instances
+- ✅ **APIM Load Balancing:** Across Container Apps only
+- ⚠️ **Single TPM Quota:** All agents share same GPT-4o deployment
 
+**Use Case:** Development, pilot projects, moderate production workloads (up to ~300K queries/month)
+
+**Monthly Cost:** ~$2,000 (See [Cost Analysis](#cost-analysis) below)
+
+---
+
+## Scale-Out Strategies
+
+As your workload grows beyond 10K TPM capacity, you have several options to scale. Each strategy has different trade-offs in terms of complexity, cost, and LLM Suite integration.
+
+### Strategy 1: Vertical Scale (Increase TPM per Project)
+
+```mermaid
+graph TB
+    subgraph External["External Clients"]
+        Client[LLM Suite / MCP Client]
+    end
+    
+    subgraph APIM["Azure API Management"]
+        Gateway[API Gateway]
+    end
+    
+    subgraph ContainerApps["Container Apps (3 instances)"]
+        CA[Container Apps<br/>12 Agent Endpoints]
+    end
+    
+    subgraph Foundry["Azure AI Foundry (Single Project)"]
+        Project[AI Project]
+        GPT4O[GPT-4o Deployment<br/>⬆️ 100K TPM<br/>Provisioned Throughput]
+        Agents[Agent Pool<br/>12 Agents]
+        Bing[Bing Grounding]
+    end
+    
+    Client -->|HTTPS| Gateway
+    Gateway -->|Load Balance| CA
+    CA -->|Managed Identity| Project
+    Project --> Agents
+    Agents -->|Use| GPT4O
+    Agents -->|Search| Bing
+    
+    style Gateway fill:#0078d4,color:#fff
+    style CA fill:#00bcf2,color:#000
+    style GPT4O fill:#ff6b6b,color:#fff
+    style Project fill:#50e6ff,color:#000
 ```
-┌──────────────────────────────────────────┐
-│         [CLIENT APPLICATIONS]            │
-│     (Web Apps, APIs, MCP Clients)       │
-└─────────────────┬────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────┐
-│       [FASTAPI APPLICATION]             │
-│                                         │
-│  Endpoints:                             │
-│  • GET  /health                         │
-│  • POST /bing-grounding                 │
-└─────────────────┬───────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────┐
-│    [AZURE AI AGENT SERVICE]             │
-│  • Bing Grounding                       │
-│  • Citation Extraction                  │
-│  • Thread Management                    │
-└─────────────────────────────────────────┘
+
+**Implementation:**
+- Increase GPT-4o deployment from 10K to 100K TPM (or higher)
+- Use Provisioned Throughput Units (PTU) for guaranteed capacity
+- No architecture changes required
+
+**Characteristics:**
+- ✅ **Simplest approach** - No code changes
+- ✅ **Single endpoint** for LLM Suite
+- ✅ **Up to 1M TPM** with PTU
+- ⚠️ **Higher cost** - PTU pricing (~$540/PTU/month)
+- ⚠️ **Single point of failure** (one project)
+
+**LLM Suite Integration:**
+- **No changes required** - Same endpoint structure
+- Continue using `/bing-grounding/gpt4o_{1-12}` endpoints
+
+**Monthly Cost:** ~$5K-50K depending on PTU allocation
+
+**When to use:** When you need quick scaling without architectural changes
+
+---
+
+### Strategy 2: Horizontal Scale with Multiple Projects (APIM Managed)
+
+```mermaid
+graph TB
+    subgraph External["External Clients"]
+        Client[LLM Suite / MCP Client<br/>Single Endpoint]
+    end
+    
+    subgraph APIM["Azure API Management - Backend Pool"]
+        Gateway[API Gateway<br/>Round-Robin LB<br/>Circuit Breaker]
+    end
+    
+    subgraph Backend1["Environment 1"]
+        CA1[Container Apps<br/>12 Agents]
+        Project1[AI Project 1<br/>GPT-4o: 10K TPM]
+    end
+    
+    subgraph Backend2["Environment 2"]
+        CA2[Container Apps<br/>12 Agents]
+        Project2[AI Project 2<br/>GPT-4o: 10K TPM]
+    end
+    
+    subgraph Backend3["Environment 3"]
+        CA3[Container Apps<br/>12 Agents]
+        Project3[AI Project 3<br/>GPT-4o: 10K TPM]
+    end
+    
+    Client -->|HTTPS| Gateway
+    Gateway -->|Route 33%| CA1
+    Gateway -->|Route 33%| CA2
+    Gateway -->|Route 34%| CA3
+    
+    CA1 --> Project1
+    CA2 --> Project2
+    CA3 --> Project3
+    
+    style Gateway fill:#0078d4,color:#fff
+    style CA1 fill:#00bcf2,color:#000
+    style CA2 fill:#00bcf2,color:#000
+    style CA3 fill:#00bcf2,color:#000
+    style Project1 fill:#50e6ff,color:#000
+    style Project2 fill:#50e6ff,color:#000
+    style Project3 fill:#50e6ff,color:#000
 ```
+
+**Implementation:**
+
+1. **Deploy multiple environments:**
+   ```bash
+   # Create 3 separate environments
+   azd env new prod-foundry-1
+   azd up
+   
+   azd env new prod-foundry-2
+   azd up
+   
+   azd env new prod-foundry-3
+   azd up
+   ```
+
+2. **Configure APIM backend pool:**
+   ```xml
+   <backends>
+     <backend id="foundry-pool">
+       <backend>
+         <url>https://ca-foundry1.azurecontainerapps.io</url>
+       </backend>
+       <backend>
+         <url>https://ca-foundry2.azurecontainerapps.io</url>
+       </backend>
+       <backend>
+         <url>https://ca-foundry3.azurecontainerapps.io</url>
+       </backend>
+     </backend>
+   </backends>
+   
+   <inbound>
+     <set-backend-service backend-id="foundry-pool" />
+   </inbound>
+   ```
+
+**Characteristics:**
+- ✅ **Linear capacity scaling** (3 projects × 10K = 30K TPM)
+- ✅ **Fault tolerance** - Project failures don't affect others
+- ✅ **Cost efficient** - Pay-per-use pricing
+- ✅ **Single endpoint** for LLM Suite (APIM handles routing)
+- ⚠️ **More infrastructure** to manage (3 environments)
+- ⚠️ **Requires APIM configuration** update
+
+**LLM Suite Integration:**
+- **No changes required** - LLM Suite sees single APIM endpoint
+- APIM transparently routes to available Foundry projects
+- Maintains same `/bing-grounding/gpt4o_{1-12}` endpoint structure
+
+**Monthly Cost:** ~$6K (3 environments × $2K each)
+
+**When to use:** 
+- Need 20K-50K TPM capacity
+- Want fault tolerance across projects
+- Prefer pay-per-use over PTU pricing
+
+---
+
+### Strategy 3: Horizontal Scale with Client-Side Load Balancing
+
+```mermaid
+graph TB
+    subgraph External["External Clients"]
+        Client[LLM Suite / MCP Client<br/>⬆️ Client-Side LB Logic]
+    end
+    
+    subgraph APIM["Azure API Management"]
+        Gateway[API Gateway<br/>Shared Policies]
+    end
+    
+    subgraph Backend1["Environment 1"]
+        CA1[Container Apps<br/>12 Agents]
+        Project1[AI Project 1<br/>GPT-4o: 10K TPM]
+    end
+    
+    subgraph Backend2["Environment 2"]
+        CA2[Container Apps<br/>12 Agents]
+        Project2[AI Project 2<br/>GPT-4o: 10K TPM]
+    end
+    
+    subgraph Backend3["Environment 3"]
+        CA3[Container Apps<br/>12 Agents]
+        Project3[AI Project 3<br/>GPT-4o: 10K TPM]
+    end
+    
+    Client -->|33% Traffic| Gateway
+    Client -->|33% Traffic| Gateway
+    Client -->|34% Traffic| Gateway
+    
+    Gateway -->|/project1/*| CA1
+    Gateway -->|/project2/*| CA2
+    Gateway -->|/project3/*| CA3
+    
+    CA1 --> Project1
+    CA2 --> Project2
+    CA3 --> Project3
+    
+    style Client fill:#ffa500,color:#fff
+    style Gateway fill:#0078d4,color:#fff
+    style CA1 fill:#00bcf2,color:#000
+    style CA2 fill:#00bcf2,color:#000
+    style CA3 fill:#00bcf2,color:#000
+    style Project1 fill:#50e6ff,color:#000
+    style Project2 fill:#50e6ff,color:#000
+    style Project3 fill:#50e6ff,color:#000
+```
+
+**Implementation:**
+
+1. **Deploy multiple environments with distinct paths:**
+   ```bash
+   azd env new prod-foundry-1
+   azd up
+   # Endpoint: https://apim.azure-api.net/project1/bing-grounding
+   
+   azd env new prod-foundry-2
+   azd up
+   # Endpoint: https://apim.azure-api.net/project2/bing-grounding
+   
+   azd env new prod-foundry-3
+   azd up
+   # Endpoint: https://apim.azure-api.net/project3/bing-grounding
+   ```
+
+2. **Configure APIM routing:**
+   ```xml
+   <choose>
+     <when condition="@(context.Request.Url.Path.StartsWith("/project1"))">
+       <set-backend-service base-url="https://ca-foundry1.azurecontainerapps.io" />
+     </when>
+     <when condition="@(context.Request.Url.Path.StartsWith("/project2"))">
+       <set-backend-service base-url="https://ca-foundry2.azurecontainerapps.io" />
+     </when>
+     <when condition="@(context.Request.Url.Path.StartsWith("/project3"))">
+       <set-backend-service base-url="https://ca-foundry3.azurecontainerapps.io" />
+     </when>
+   </choose>
+   ```
+
+3. **Update LLM Suite configuration:**
+   ```yaml
+   # LLM Suite config
+   foundry_endpoints:
+     - url: https://apim.azure-api.net/project1/bing-grounding
+       weight: 33
+       capacity: 10000  # TPM
+     - url: https://apim.azure-api.net/project2/bing-grounding
+       weight: 33
+       capacity: 10000
+     - url: https://apim.azure-api.net/project3/bing-grounding
+       weight: 34
+       capacity: 10000
+   
+   load_balancing:
+     strategy: round-robin  # or weighted, least-connections
+     health_check_interval: 30s
+   ```
+
+**Characteristics:**
+- ✅ **Full control** over routing logic in LLM Suite
+- ✅ **Project-specific routing** for workload segregation
+- ✅ **Custom failover** logic possible
+- ✅ **Cost visibility** per project endpoint
+- ⚠️ **LLM Suite changes required** (configuration + logic)
+- ⚠️ **More complex** client implementation
+- ⚠️ **Manual endpoint management**
+
+**LLM Suite Integration:**
+- **Configuration changes required** - Multiple endpoints
+- **Load balancing logic required** - Client-side round-robin/weighted
+- **Health monitoring recommended** - Check endpoint availability
+- **Per-agent endpoints:**
+  - Project 1: `/project1/bing-grounding/gpt4o_{1-12}`
+  - Project 2: `/project2/bing-grounding/gpt4o_{1-12}`
+  - Project 3: `/project3/bing-grounding/gpt4o_{1-12}`
+
+**Monthly Cost:** ~$6K (3 environments × $2K each)
+
+**When to use:**
+- Need advanced routing logic (tenant isolation, workload prioritization)
+- Want fine-grained control over traffic distribution
+- LLM Suite already has load balancing capabilities
+- Need per-project cost tracking
+
+---
+
+### Strategy 4: Hybrid - PTU + Multi-Project
+
+```mermaid
+graph TB
+    subgraph External["External Clients"]
+        Client[LLM Suite / MCP Client]
+    end
+    
+    subgraph APIM["Azure API Management - Weighted LB"]
+        Gateway[API Gateway<br/>80% to PTU<br/>20% to Standard]
+    end
+    
+    subgraph PrimaryProject["Primary Project - PTU"]
+        CA_PTU[Container Apps<br/>12 Agents]
+        Project_PTU[AI Project<br/>GPT-4o PTU<br/>100K TPM<br/>Guaranteed]
+    end
+    
+    subgraph FallbackProjects["Fallback Projects - Standard"]
+        CA_STD1[Container Apps<br/>12 Agents]
+        Project_STD1[AI Project 1<br/>GPT-4o: 10K TPM]
+        
+        CA_STD2[Container Apps<br/>12 Agents]
+        Project_STD2[AI Project 2<br/>GPT-4o: 10K TPM]
+    end
+    
+    Client -->|HTTPS| Gateway
+    Gateway -->|80% Primary| CA_PTU
+    Gateway -->|10% Spillover| CA_STD1
+    Gateway -->|10% Spillover| CA_STD2
+    
+    CA_PTU --> Project_PTU
+    CA_STD1 --> Project_STD1
+    CA_STD2 --> Project_STD2
+    
+    style Gateway fill:#0078d4,color:#fff
+    style CA_PTU fill:#4caf50,color:#fff
+    style Project_PTU fill:#ff6b6b,color:#fff
+    style CA_STD1 fill:#00bcf2,color:#000
+    style CA_STD2 fill:#00bcf2,color:#000
+```
+
+**Implementation:**
+
+1. **Deploy primary PTU project:**
+   ```bash
+   # Modify infra/resources.bicep to use PTU
+   param openAiDeploymentType string = 'ProvisionedThroughput'
+   param openAiCapacity int = 100  # 100 PTUs
+   
+   azd env new prod-primary
+   azd up
+   ```
+
+2. **Deploy fallback standard projects:**
+   ```bash
+   azd env new prod-fallback-1
+   azd up
+   
+   azd env new prod-fallback-2
+   azd up
+   ```
+
+3. **Configure weighted APIM routing:**
+   ```xml
+   <set-variable name="backendIndex" value="@{
+       var rand = new Random().Next(100);
+       if (rand < 80) return "ptu";      // 80% to PTU
+       if (rand < 90) return "std1";     // 10% to Standard 1
+       return "std2";                     // 10% to Standard 2
+   }" />
+   
+   <choose>
+     <when condition="@(context.Variables["backendIndex"] == "ptu")">
+       <set-backend-service base-url="https://ca-ptu.azurecontainerapps.io" />
+     </when>
+     <when condition="@(context.Variables["backendIndex"] == "std1")">
+       <set-backend-service base-url="https://ca-std1.azurecontainerapps.io" />
+     </when>
+     <otherwise>
+       <set-backend-service base-url="https://ca-std2.azurecontainerapps.io" />
+     </otherwise>
+   </choose>
+   ```
+
+**Characteristics:**
+- ✅ **Guaranteed capacity** (100K TPM from PTU)
+- ✅ **Burst capacity** (additional 20K TPM from standard)
+- ✅ **Cost optimized** - PTU for baseline, pay-per-use for spikes
+- ✅ **High availability** - Multiple fallback projects
+- ⚠️ **Complex configuration** - Weighted routing + health checks
+- ⚠️ **Higher base cost** - PTU commitment
+
+**LLM Suite Integration:**
+- **No changes required** - Single APIM endpoint
+- APIM handles weighted routing automatically
+- Transparent failover to standard projects
+
+**Monthly Cost:** ~$25K (PTU: $21K + 2 standard projects: $4K)
+
+**When to use:**
+- Need guaranteed baseline capacity (100K TPM)
+- Expect traffic spikes beyond PTU allocation
+- Want cost predictability with burst capability
+- Mission-critical workloads requiring SLA
+
+---
+
+### Comparison Matrix
+
+| Strategy | Max TPM | HA | Cost/Month | LLM Suite Changes | Complexity | Best For |
+|----------|---------|-----|-----------|-------------------|------------|----------|
+| **Strategy 1: Vertical (PTU)** | 1M+ | Medium | $5K-50K | None | Low | Quick scaling, predictable load |
+| **Strategy 2: Horizontal (APIM LB)** | 50K+ | High | $6K+ | None | Medium | Cost efficiency, fault tolerance |
+| **Strategy 3: Horizontal (Client LB)** | 50K+ | High | $6K+ | Configuration + Logic | High | Advanced routing, tenant isolation |
+| **Strategy 4: Hybrid (PTU + Multi)** | 120K+ | Very High | $25K+ | None | High | Mission-critical, guaranteed capacity |
+
+---
+
+### Recommendation by Workload
+
+**Pilot / Development (< 10K TPM):**
+- Use current single-project architecture
+- Cost: ~$2K/month
+- Scale strategy: None needed
+
+**Production - Light (10K-30K TPM):**
+- **Recommended:** Strategy 2 (Horizontal with APIM LB)
+- Deploy 2-3 projects
+- Cost: ~$4K-6K/month
+- LLM Suite: No changes
+
+**Production - Medium (30K-100K TPM):**
+- **Recommended:** Strategy 1 (Vertical PTU)
+- Single project with 50-100 PTUs
+- Cost: ~$27K-54K/month
+- LLM Suite: No changes
+
+**Production - Heavy (100K+ TPM):**
+- **Recommended:** Strategy 4 (Hybrid PTU + Multi-Project)
+- PTU baseline + standard fallbacks
+- Cost: ~$25K+ /month
+- LLM Suite: No changes
+
+**Enterprise - Mission Critical:**
+- **Recommended:** Strategy 4 + Multi-region
+- Deploy across 2-3 Azure regions
+- Cost: ~$75K+/month
+- LLM Suite: Optional geo-routing
+
+---
 
 ## Prerequisites
 
