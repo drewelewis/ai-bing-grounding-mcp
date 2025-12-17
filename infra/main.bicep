@@ -33,10 +33,27 @@ param containerRegistryName string = ''
 @description('Container image to deploy. If empty, uses default.')
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
-@description('Number of Container App instances to deploy for load balancing')
-@minValue(1)
-@maxValue(10)
-param containerAppInstances int = 3
+// Model pool sizes from .env (set by preprovision script)
+@description('Number of GPT-4.1 agents to create')
+param agentPoolSizeGpt41 int = 0
+
+@description('Number of GPT-5 agents to create')
+param agentPoolSizeGpt5 int = 0
+
+@description('Number of GPT-5-mini agents to create')
+param agentPoolSizeGpt5Mini int = 0
+
+@description('Number of GPT-5-nano agents to create')
+param agentPoolSizeGpt5Nano int = 0
+
+@description('Number of GPT-4o agents to create')
+param agentPoolSizeGpt4o int = 0
+
+@description('Number of GPT-4 agents to create')
+param agentPoolSizeGpt4 int = 0
+
+@description('Number of GPT-3.5-turbo agents to create')
+param agentPoolSizeGpt35Turbo int = 0
 
 // Generate resource group name if not provided
 var abbrs = loadJsonContent('./abbreviations.json')
@@ -72,7 +89,14 @@ module resources './resources.bicep' = {
     containerAppName: finalContainerAppName
     containerRegistryName: finalContainerRegistryName
     containerImage: containerImage
-    containerAppInstances: containerAppInstances
+    // Model pool configuration
+    agentPoolSizeGpt41: agentPoolSizeGpt41
+    agentPoolSizeGpt5: agentPoolSizeGpt5
+    agentPoolSizeGpt5Mini: agentPoolSizeGpt5Mini
+    agentPoolSizeGpt5Nano: agentPoolSizeGpt5Nano
+    agentPoolSizeGpt4o: agentPoolSizeGpt4o
+    agentPoolSizeGpt4: agentPoolSizeGpt4
+    agentPoolSizeGpt35Turbo: agentPoolSizeGpt35Turbo
   }
 }
 

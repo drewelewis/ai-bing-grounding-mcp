@@ -4,5 +4,6 @@
   "cognitiveServicesAccounts": "ai-",
   "appManagedEnvironments": "cae-",
   "appContainerApps": "ca-",
-  "containerRegistryRegistries": "acr"
+  "containerRegistryRegistries": "acr",
+  "bingAccounts": "bing-"
 }

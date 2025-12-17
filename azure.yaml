@@ -7,23 +7,23 @@ hooks:
   preprovision:
     windows:
       shell: pwsh
-      run: python scripts/preprovision_check_resource_group.py ; python scripts/preprovision_register_providers.py
+      run: python scripts/preprovision_read_model_config.py ; python scripts/preprovision_purge_soft_deleted.py ; python scripts/preprovision_check_resource_group.py ; python scripts/preprovision_register_providers.py ; python scripts/preprovision_select_bing_resource.py
       continueOnError: false
       interactive: true
     posix:
       shell: sh
-      run: python scripts/preprovision_check_resource_group.py && python scripts/preprovision_register_providers.py
+      run: python scripts/preprovision_read_model_config.py && python scripts/preprovision_purge_soft_deleted.py && python scripts/preprovision_check_resource_group.py && python scripts/preprovision_register_providers.py && python scripts/preprovision_select_bing_resource.py
       continueOnError: false
       interactive: true
   postprovision:
     windows:
       shell: pwsh
-      run: python scripts/postprovision_create_agents.py
+      run: python scripts/postprovision_deploy_models.py ; python scripts/postprovision_deploy_bing_connection.py ; python scripts/postprovision_create_agents.py
       continueOnError: false
       interactive: false
     posix:
       shell: sh
-      run: python scripts/postprovision_create_agents.py
+      run: python scripts/postprovision_deploy_models.py && python scripts/postprovision_deploy_bing_connection.py && python scripts/postprovision_create_agents.py
       continueOnError: false
       interactive: false
 

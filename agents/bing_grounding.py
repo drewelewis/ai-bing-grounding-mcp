@@ -27,9 +27,19 @@ class BingGroundingAgent(BaseAgent):
     def chat(self, message: str) -> str:
         """Process a single message using Azure AI Agent with Bing grounding"""
         thread = None
+        debug_info = {
+            "run_status": None,
+            "run_error": None,
+            "message_count": 0,
+            "has_assistant_message": False,
+            "raw_response": None,
+            "annotations_count": 0
+        }
+        
         try:
             # Create a new thread for this conversation
             thread = self.project.agents.threads.create()
+            debug_info["thread_id"] = thread.id
             
             # Add the user message
             self.project.agents.messages.create(
@@ -44,8 +54,16 @@ class BingGroundingAgent(BaseAgent):
                 agent_id=self.agent.id
             )
             
+            debug_info["run_status"] = run.status
+            debug_info["run_id"] = run.id
+            
             if run.status == "failed":
-                return f"Agent run failed: {run.last_error}"
+                debug_info["run_error"] = str(run.last_error) if run.last_error else "Unknown error"
+                return json.dumps({
+                    "content": "",
+                    "citations": [],
+                    "debug": debug_info
+                }, indent=2)
             
             # Get the response messages
             response_messages = self.project.agents.messages.list(
@@ -53,11 +71,16 @@ class BingGroundingAgent(BaseAgent):
                 order=ListSortOrder.ASCENDING
             )
             
+            messages_list = list(response_messages)
+            debug_info["message_count"] = len(messages_list)
+            
             # Get the last assistant message with citations
-            for msg in reversed(list(response_messages)):
+            for msg in reversed(messages_list):
                 if msg.role == "assistant" and msg.text_messages:
+                    debug_info["has_assistant_message"] = True
                     text_message = msg.text_messages[-1]
                     response_text = text_message.text.value
+                    debug_info["raw_response"] = response_text[:200] + "..." if len(response_text) > 200 else response_text
                     
                     # Remove inline citation markers like 【3:0†source】
                     response_text = re.sub(r'【\d+:\d+†[^】]+】', '', response_text)
@@ -65,6 +88,7 @@ class BingGroundingAgent(BaseAgent):
                     # Extract and format citations if available
                     citations = []
                     if hasattr(text_message.text, 'annotations') and text_message.text.annotations:
+                        debug_info["annotations_count"] = len(text_message.text.annotations)
                         for idx, annotation in enumerate(text_message.text.annotations, 1):
                             citation = {}
                             
@@ -92,18 +116,33 @@ class BingGroundingAgent(BaseAgent):
                             if citation:
                                 citations.append(citation)
                     
-                    # Return JSON response
+                    # Return JSON response with debug info
                     result = {
                         "content": response_text.strip(),
-                        "citations": citations
+                        "citations": citations,
+                        "debug": debug_info
                     }
                     
                     return json.dumps(result, indent=2)
             
-            return "No response from agent"
+            # No assistant message found
+            debug_info["no_response_reason"] = "No assistant message in thread"
+            return json.dumps({
+                "content": "",
+                "citations": [],
+                "debug": debug_info
+            }, indent=2)
             
         except Exception as e:
-            return f"Error processing request: {str(e)}"
+            debug_info["exception"] = str(e)
+            debug_info["exception_type"] = type(e).__name__
+            return json.dumps({
+                "content": "",
+                "citations": [],
+                "error": "processing_error",
+                "message": str(e),
+                "debug": debug_info
+            }, indent=2)
         finally:
             # Clean up the thread after processing
             if thread:

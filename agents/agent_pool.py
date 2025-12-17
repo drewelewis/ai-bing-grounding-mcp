@@ -21,10 +21,36 @@ def discover_agents() -> Dict[str, List[str]]:
     pattern = re.compile(r'^AZURE_AI_AGENT_([A-Z0-9_]+)_(\d+)$')
     
     model_mapping = {
+        # GPT-5 series
+        "GPT5": "gpt-5",
+        "GPT5_MINI": "gpt-5-mini",
+        "GPT5_NANO": "gpt-5-nano",
+        "GPT5_PRO": "gpt-5-pro",
+        "GPT5_CHAT": "gpt-5-chat",
+        
+        # GPT-4.1 series
+        "GPT41": "gpt-4.1",
+        "GPT41_MINI": "gpt-4.1-mini",
+        "GPT41_NANO": "gpt-4.1-nano",
+        
+        # GPT-4o series
         "GPT4O": "gpt-4o",
-        "GPT4_TURBO": "gpt-4-turbo",
+        
+        # GPT-4 series
         "GPT4": "gpt-4",
-        "GPT35_TURBO": "gpt-35-turbo"
+        "GPT4_32K": "gpt-4-32k",
+        "GPT4_TURBO": "gpt-4-turbo",
+        
+        # GPT-3.5 series
+        "GPT35_TURBO": "gpt-35-turbo",
+        "GPT35_TURBO_16K": "gpt-35-turbo-16k",
+        
+        # o-series
+        "O3": "o3",
+        "O3_MINI": "o3-mini",
+        "O1": "o1",
+        "O1_MINI": "o1-mini",
+        "O4_MINI": "o4-mini"
     }
     
     for key, value in os.environ.items():

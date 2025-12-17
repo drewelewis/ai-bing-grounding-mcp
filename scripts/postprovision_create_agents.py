@@ -1,4 +1,5 @@
 ﻿#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Create multiple Bing grounding agents in Azure AI Project.
 
@@ -12,17 +13,31 @@ import os
 import sys
 from pathlib import Path
 
+# Set UTF-8 encoding for Windows console
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 # Ensure required packages are installed
 try:
     from azure.ai.projects import AIProjectClient
-    from azure.ai.agents.models import BingGroundingTool
+    from azure.ai.agents.models import (
+        BingGroundingToolDefinition,
+        BingGroundingSearchToolParameters,
+        BingGroundingSearchConfiguration
+    )
     from azure.identity import DefaultAzureCredential
 except ImportError:
-    print("?? Installing required packages...")
+    print("[INFO] Installing required packages...")
     import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "azure-ai-projects", "azure-identity", "azure-ai-agents"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "azure-ai-projects", "azure-identity"])
     from azure.ai.projects import AIProjectClient
-    from azure.ai.agents.models import BingGroundingTool
+    from azure.ai.agents.models import (
+        BingGroundingToolDefinition,
+        BingGroundingSearchToolParameters,
+        BingGroundingSearchConfiguration
+    )
     from azure.identity import DefaultAzureCredential
 
 # Number of agents to create
@@ -155,13 +170,24 @@ def main():
     # For beta10 SDK with hub-based projects, Bing tool may work without explicit connection ID
     bing_connection_id = get_env_value("AZURE_BING_CONNECTION_ID")
     
-    # Model configurations with pool sizes
-    # Note: gpt-4o-mini and gpt-5 models do NOT support Bing grounding
-    # GPT-4 Turbo removed due to deprecation - using GPT-4o, GPT-4, and GPT-3.5 Turbo
+    # Model configurations (ONLY officially supported models for Bing grounding)
+    # GPT-4o, GPT-4, GPT-3.5-Turbo are the ONLY verified models per Microsoft docs
+    # GPT-4.1 REMOVED - not a real model
+    # GPT-5 series REMOVED - does not support Bing grounding tool (uses Responses API only)
+    # o-series REMOVED - reasoning models use different API
+    # NOTE: pool_size_env must match camelCase parameter names in .azure/{env}/.env
     model_configs = [
-        {"name": "gpt-4o", "key": "GPT4O", "pool_size_env": "AGENT_POOL_SIZE_GPT4O", "default_size": 12},
-        {"name": "gpt-4", "key": "GPT4", "pool_size_env": "AGENT_POOL_SIZE_GPT4", "default_size": 0},
-        {"name": "gpt-35-turbo", "key": "GPT35_TURBO", "pool_size_env": "AGENT_POOL_SIZE_GPT35_TURBO", "default_size": 0},
+        # GPT-4o series
+        {"name": "gpt-4o", "key": "GPT4O", "pool_size_env": "agentPoolSizeGpt4o", "default_size": 0},
+        
+        # GPT-4 series
+        {"name": "gpt-4", "key": "GPT4", "pool_size_env": "agentPoolSizeGpt4", "default_size": 0},
+        {"name": "gpt-4-32k", "key": "GPT4_32K", "pool_size_env": "agentPoolSizeGpt4_32k", "default_size": 0},
+        {"name": "gpt-4-turbo", "key": "GPT4_TURBO", "pool_size_env": "agentPoolSizeGpt4Turbo", "default_size": 0},
+        
+        # GPT-3.5 series
+        {"name": "gpt-35-turbo", "key": "GPT35_TURBO", "pool_size_env": "agentPoolSizeGpt35Turbo", "default_size": 0},
+        {"name": "gpt-35-turbo-16k", "key": "GPT35_TURBO_16K", "pool_size_env": "agentPoolSizeGpt35Turbo16k", "default_size": 0},
     ]
     
     # Read pool sizes from environment
@@ -202,6 +228,24 @@ def main():
             credential=credential
         )
         
+        # Delete all existing agents with our naming pattern to avoid duplicates
+        print("?? Cleaning up existing agents...")
+        try:
+            existing_agents = project_client.agents.list_agents()
+            deleted_count = 0
+            for agent in existing_agents:
+                if agent.name and agent.name.startswith("agent_bing_"):
+                    print(f"  Deleting old agent: {agent.name} ({agent.id})")
+                    project_client.agents.delete_agent(agent.id)
+                    deleted_count += 1
+            if deleted_count > 0:
+                print(f"?? Deleted {deleted_count} old agent(s)")
+            else:
+                print("  No existing agents to delete")
+        except Exception as e:
+            print(f"  Warning: Could not clean up agents: {e}")
+        print()
+        
         agent_ids = []
         agent_counter = 1
         
@@ -223,25 +267,46 @@ def main():
                 print(f"  [{agent_counter}] Creating {agent_name}...", end=" ")
                 
                 try:
-                    # Get or construct Bing connection ID
-                    # The connection will be auto-provisioned when the agent is first used
-                    try:
-                        bing_connection_id = get_env_value("AZURE_BING_CONNECTION_ID")
-                    except:
-                        # Construct default connection ID if not in environment
-                        subscription_id = get_env_value("AZURE_SUBSCRIPTION_ID")
-                        resource_group = get_env_value("AZURE_RESOURCE_GROUP")
-                        bing_connection_id = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.CognitiveServices/accounts/{foundry_name}/projects/{project_name}/connections/default-bing"
+                    # Get Bing resource ID from preprovision selection
+                    bing_resource_id = get_env_value("BING_GROUNDING_RESOURCE_ID")
+                    if not bing_resource_id:
+                        print()
+                        print()
+                        print("[ERROR] BING_GROUNDING_RESOURCE_ID not found!")
+                        print("  This should have been set during preprovision.")
+                        print("  Run 'azd up' again to select a Bing resource.")
+                        return 1
                     
-                    # Initialize Bing Grounding tool
-                    bing = BingGroundingTool(connection_id=bing_connection_id)
+                    # Construct connection ID: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{foundry}/projects/{project}/connections/default-bing
+                    subscription_id = get_env_value("AZURE_SUBSCRIPTION_ID")
+                    resource_group = get_env_value("AZURE_RESOURCE_GROUP")
+                    bing_connection_id = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.CognitiveServices/accounts/{foundry_name}/projects/{project_name}/connections/default-bing"
                     
-                    # Create agent with Bing grounding
+                    # Create Bing grounding tool configuration
+                    bing_tool = BingGroundingToolDefinition(
+                        bing_grounding=BingGroundingSearchToolParameters(
+                            search_configurations=[
+                                BingGroundingSearchConfiguration(
+                                    connection_id=bing_connection_id
+                                )
+                            ]
+                        )
+                    )
+                    
+                    # Create agent using AgentsClient (creates modern agents, not classic)
                     agent = project_client.agents.create_agent(
                         model=model_name,
                         name=agent_name,
-                        instructions="You are a helpful assistant with access to Bing Search. Use Bing Search to provide accurate, up-to-date information with citations.",
-                        tools=bing.definitions
+                        instructions="""You are a web search assistant with ONE RULE: Never answer without searching first.
+
+For every query, you MUST:
+- Call Bing Search tool BEFORE answering (mandatory step)
+- Base your entire response on search results only
+- Include citations [1], [2] for all facts
+
+FORBIDDEN: Answering from memory or training data. Search is required for ALL queries.""",
+                        tools=[bing_tool],
+                        description="Agent with Bing grounding for real-time web search"
                     )
                     
                     agent_ids.append({"id": agent.id, "name": agent_name, "model": model_name})

@@ -26,21 +26,32 @@ The fastest way to get started is with Azure Developer CLI:
 # 1. Login to Azure
 azd auth login
 
-# 2. Create and deploy environment (one command!)
+# 2. Create environment (first time only)
 azd env new <environment-name>
+
+# 3. Provision and deploy everything
 azd up
 ```
 
-That's it! This will:
-- ✅ Create all Azure resources (Container Apps, AI Foundry, Storage, etc.)
-- ✅ Automatically create 12 GPT-4o AI agents with Bing grounding
-- ✅ Build and deploy the Docker container
-- ✅ Configure managed identities and RBAC
-- ✅ Set up API Management with load balancing
+That's it! **One command does everything:**
+- ✅ Provisions all Azure resources (Container Apps, AI Foundry, APIM, etc.)
+- ✅ Automatically creates 12 GPT-4o AI agents with Bing grounding (new API)
+- ✅ Builds and deploys the Docker container
+- ✅ Configures managed identities and RBAC
+- ✅ Sets up API Management with load balancing
 
 **The entire process takes approximately 8-15 minutes.**
 
 Your API will be available at the endpoint shown in the output.
+
+### Common Commands
+
+| Command | What It Does | When to Use |
+|---------|-------------|-------------|
+| `azd up` | Provision + Deploy everything | **Use this for initial setup and updates** |
+| `azd deploy` | Deploy code only (skip provisioning) | Quick code updates to existing resources |
+| `azd down` | Delete all Azure resources | Clean up / tear down environment |
+| `azd env list` | Show available environments | Check which environments exist |
 
 📚 **For detailed provisioning steps**, see [Deployment to Azure](#deployment-to-azure) below.
 
@@ -557,6 +568,294 @@ graph TB
 
 ---
 
+## Multi-Region Deployment
+
+Deploy your Bing Grounding API across multiple Azure regions for geographic load distribution, disaster recovery, and reduced latency for global users.
+
+### Benefits
+
+✅ **Geographic Load Distribution** - Spread traffic across regions  
+✅ **Disaster Recovery** - Automatic failover if one region is down  
+✅ **Lower Latency** - Users connect to nearest region  
+✅ **Better Quota Utilization** - Separate TPM quotas per region  
+✅ **Region Tracking** - Know which region served each request
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph Clients["Global Clients"]
+        USClient[US Clients]
+        EUClient[EU Clients]
+    end
+    
+    subgraph APIM["Azure API Management (Global Gateway)"]
+        Gateway[API Gateway<br/>• Geo-routing<br/>• Health Checks<br/>• Circuit Breaker]
+    end
+    
+    subgraph EastUS["East US Region"]
+        CA_East[Container App<br/>eastus]
+        Foundry_East[AI Foundry<br/>5 Agents]
+        Bing_East[Bing Grounding]
+    end
+    
+    subgraph WestUS["West US Region"]
+        CA_West[Container App<br/>westus]
+        Foundry_West[AI Foundry<br/>5 Agents]
+        Bing_West[Bing Grounding]
+    end
+    
+    subgraph WestEU["West Europe Region"]
+        CA_EU[Container App<br/>westeurope]
+        Foundry_EU[AI Foundry<br/>5 Agents]
+        Bing_EU[Bing Grounding]
+    end
+    
+    USClient --> Gateway
+    EUClient --> Gateway
+    
+    Gateway -->|Geo-routing| CA_East
+    Gateway -->|Load balance| CA_West
+    Gateway -->|Geo-routing| CA_EU
+    
+    CA_East --> Foundry_East
+    CA_West --> Foundry_West
+    CA_EU --> Foundry_EU
+    
+    Foundry_East --> Bing_East
+    Foundry_West --> Bing_West
+    Foundry_EU --> Bing_EU
+    
+    style Gateway fill:#0078d4,color:#fff
+    style CA_East fill:#00bcf2,color:#000
+    style CA_West fill:#00bcf2,color:#000
+    style CA_EU fill:#00bcf2,color:#000
+```
+
+### Region Tracking
+
+Each response includes metadata showing which region served the request:
+
+```json
+{
+  "content": "AI-generated response...",
+  "citations": [...],
+  "metadata": {
+    "agent_route": "gpt4o_2",
+    "model": "gpt-4o",
+    "agent_id": "asst_abc123...",
+    "region": "westus"  ← Region identifier
+  }
+}
+```
+
+This enables:
+- **Monitoring** - Track regional traffic distribution
+- **Debugging** - Identify region-specific issues
+- **Compliance** - Audit data residency requirements
+- **Analytics** - Measure regional performance
+
+### Deployment Steps
+
+#### 1. Deploy Additional Region
+
+```bash
+# Create new environment for westus
+azd env new westus
+azd env set AZURE_LOCATION westus
+
+# Deploy (creates full stack: Foundry, agents, Container App, etc.)
+azd up
+
+# Get the Container App URL
+azd env get-values | Select-String "CONTAINER_APP"
+```
+
+**Output:** Container App URL like `ca-abc123.westus.azurecontainerapps.io`
+
+#### 2. Configure APIM Multi-Region Backend
+
+**Option A: Random Load Balancing (Simplest)**
+
+Edit your APIM API operation policy (`/bing-grounding` or `/bing-grounding-mcp`):
+
+```xml
+<policies>
+  <inbound>
+    <set-variable name="backendUrl" value="@{
+        var backends = new[] {
+            "https://ca-vw5lt6yc7noze.eastus.azurecontainerapps.io",
+            "https://ca-abc123.westus.azurecontainerapps.io"
+        };
+        var random = new Random();
+        return backends[random.Next(backends.Length)];
+    }" />
+    <set-backend-service base-url="@((string)context.Variables["backendUrl"])" />
+  </inbound>
+</policies>
+```
+
+**Option B: Geo-Routing (User Location-Based)**
+
+```xml
+<policies>
+  <inbound>
+    <set-variable name="backendUrl" value="@{
+        // Get client location from X-Forwarded-For or request headers
+        string clientLocation = context.Request.Headers.GetValueOrDefault("X-Forwarded-For", "");
+        
+        // Route based on geography
+        if (clientLocation.Contains("Europe") || clientLocation.Contains("EU"))
+            return "https://ca-eu.westeurope.azurecontainerapps.io";
+        else if (clientLocation.Contains("West") || clientLocation.Contains("Pacific"))
+            return "https://ca-west.westus.azurecontainerapps.io";
+        else
+            return "https://ca-east.eastus.azurecontainerapps.io";
+    }" />
+    <set-backend-service base-url="@((string)context.Variables["backendUrl"])" />
+  </inbound>
+</policies>
+```
+
+**Option C: Health Check with Circuit Breaker (Production)**
+
+```xml
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="healthyBackends" value="@{
+        var allBackends = new[] { 
+            "https://ca-east.eastus.azurecontainerapps.io",
+            "https://ca-west.westus.azurecontainerapps.io",
+            "https://ca-eu.westeurope.azurecontainerapps.io"
+        };
+        var healthyList = new List<string>();
+        
+        // Check cached health status
+        foreach (var backend in allBackends)
+        {
+            string cacheKey = "backend-health-" + backend;
+            string healthStatus;
+            
+            if (context.Cache.TryGetValue(cacheKey, out healthStatus))
+            {
+                if (healthStatus == "healthy")
+                    healthyList.Add(backend);
+            }
+            else
+            {
+                healthyList.Add(backend); // Assume healthy if no data
+            }
+        }
+        
+        return healthyList.Count > 0 ? healthyList : allBackends;
+    }" />
+    
+    <!-- Random selection from healthy backends -->
+    <set-backend-service base-url="@{
+        var backends = (List<string>)context.Variables["healthyBackends"];
+        var random = new Random();
+        return backends[random.Next(0, backends.Count)];
+    }" />
+  </inbound>
+  
+  <outbound>
+    <base />
+    <!-- Cache health status based on response -->
+    <choose>
+      <when condition="@(context.Response.StatusCode >= 500)">
+        <cache-store-value 
+          key="@("backend-health-" + context.Request.Url.Host)" 
+          value="unhealthy" 
+          duration="60" />
+      </when>
+      <otherwise>
+        <cache-store-value 
+          key="@("backend-health-" + context.Request.Url.Host)" 
+          value="healthy" 
+          duration="300" />
+      </otherwise>
+    </choose>
+  </outbound>
+</policies>
+```
+
+#### 3. Test Multi-Region Setup
+
+Run your test suite and observe region rotation:
+
+```bash
+python test_mcp.py
+```
+
+**Expected Output:**
+```
+Test 1: Region: eastus
+Test 2: Region: westus
+Test 3: Region: eastus
+Test 4: Region: westus
+...
+```
+
+### Required Resources Per Region
+
+Each regional deployment needs:
+
+| Resource | Required | Notes |
+|----------|----------|-------|
+| **AI Foundry Hub + Project** | ✅ Yes | New instance per region |
+| **Bing Grounding** | ✅ Yes | Must be in same resource group as Foundry |
+| **Container App** | ✅ Yes | This is the endpoint APIM routes to |
+| **Container App Environment** | ✅ Yes | Required for Container Apps |
+| **Log Analytics** | ✅ Yes | For Container App logging |
+| **Storage Account** | Recommended | Better for region isolation |
+| **Key Vault** | Recommended | Better availability |
+| **Container Registry** | Optional | Can reuse from primary region |
+| **APIM** | ❌ No | Single global gateway, reused across regions |
+
+### Cost Considerations
+
+**Per Additional Region:**
+- AI Foundry Project: ~$0 (pay-per-use)
+- GPT-4o deployment (10K TPM): ~$800/month
+- Container App: ~$50-100/month
+- Container Environment: ~$50/month
+- Bing Grounding (Free tier): $0
+- Storage + Key Vault + Logs: ~$50/month
+
+**Total per region:** ~$950-1,000/month
+
+**3-Region Setup (East US, West US, West Europe):**
+- **Total:** ~$3,000/month
+- **Benefits:** 30K TPM total capacity + geo-distribution + disaster recovery
+
+### Best Practices
+
+1. **Start with 2 regions** - Primary + failover
+2. **Use health checks** - Implement circuit breaker pattern
+3. **Monitor region distribution** - Track `metadata.region` field
+4. **Set region-specific alerts** - Azure Monitor per region
+5. **Test failover** - Regularly verify automatic failover works
+6. **Cache DNS** - Consider Azure Front Door for advanced geo-routing
+
+### Monitoring Multi-Region
+
+**Azure Monitor Query (Log Analytics):**
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(1h)
+| extend region = tostring(parse_json(Log_s).metadata.region)
+| summarize count() by region, bin(TimeGenerated, 5m)
+| render timechart
+```
+
+**APIM Analytics:**
+
+Track backend distribution in APIM → Analytics → Custom Dimensions
+
+---
+
 ## Prerequisites
 
 ### For Local Development
@@ -640,7 +939,9 @@ curl http://localhost:8989/health
 ```json
 {
   "status": "ok",
-  "service": "bing-grounding-api"
+  "service": "bing-grounding-api",
+  "region": "eastus",
+  "agents_loaded": 5
 }
 ```
 
@@ -673,7 +974,13 @@ curl -X POST "http://localhost:8989/bing-grounding?query=What+happened+in+financ
       "url": "https://www.cnbc.com/...",
       "title": "Federal Reserve Commentary"
     }
-  ]
+  ],
+  "metadata": {
+    "agent_route": "gpt4o_1",
+    "model": "gpt-4o",
+    "agent_id": "asst_abc123...",
+    "region": "eastus"
+  }
 }
 ```
 
@@ -681,7 +988,13 @@ curl -X POST "http://localhost:8989/bing-grounding?query=What+happened+in+financ
 ```json
 {
   "error": "processing_error",
-  "message": "Error details..."
+  "message": "Error details...",
+  "metadata": {
+    "agent_route": "gpt4o_1",
+    "model": "gpt-4o",
+    "agent_id": "asst_abc123...",
+    "region": "eastus"
+  }
 }
 ```
 
@@ -690,6 +1003,592 @@ curl -X POST "http://localhost:8989/bing-grounding?query=What+happened+in+financ
 - ✅ Automatic citation extraction and formatting
 - ✅ Clean content (inline citation markers removed)
 - ✅ Structured JSON response
+- ✅ Region tracking in metadata
+
+### Response Metadata (Debugging Information)
+
+Every API response includes a `metadata` object with debugging information:
+
+| Field | Type | Description | Example | Purpose |
+|-------|------|-------------|---------|---------|
+| `region` | string | Azure region serving the request | `"eastus"`, `"westus"` | Track multi-region load balancing; identify regional issues |
+| `model` | string | AI model used for generation | `"gpt-4o"`, `"gpt-4o-mini"` | Verify correct model deployment; compare model performance |
+| `agent_route` | string | Agent pool identifier | `"gpt4o_1"`, `"gpt4o_5"` | Load balancing verification; identify agent-specific issues |
+| `agent_id` | string | Azure AI Agent instance ID | `"asst_ElHsNtK1PSFxwha7..."` | Track specific agent behavior; troubleshoot agent errors |
+
+**Why Metadata Matters for Debugging:**
+
+1. **Multi-Region Deployments** - Know which region handled the request to diagnose latency or regional outages
+2. **Load Balancing Verification** - Confirm APIM is distributing across agent pools (`gpt4o_1` through `gpt4o_5`)
+3. **Performance Analysis** - Compare response times/quality across regions, models, or agents
+4. **Error Troubleshooting** - Identify if errors are isolated to specific agents, regions, or models
+5. **Compliance & Auditing** - Track data residency and model usage for regulatory requirements
+
+**Example Success Response with Metadata:**
+```json
+{
+  "content": "Azure AI Foundry is a comprehensive platform for building, deploying, and managing AI applications...",
+  "citations": [
+    {
+      "id": 1,
+      "type": "url",
+      "url": "https://azure.microsoft.com/products/ai-studio",
+      "title": "Azure AI Foundry Documentation"
+    }
+  ],
+  "metadata": {
+    "agent_route": "gpt4o_3",      // ← Agent pool #3 (load balanced)
+    "model": "gpt-4o",              // ← Using GPT-4o model
+    "agent_id": "asst_ElHsNtK1PSFxwha7tLWIFM7T",  // ← Specific agent instance
+    "region": "eastus"              // ← Request served from East US
+  }
+}
+```
+
+**Example Error Response with Metadata:**
+```json
+{
+  "error": "rate_limit_exceeded",
+  "message": "Model deployment TPM limit exceeded. Please retry.",
+  "metadata": {
+    "agent_route": "gpt4o_2",      // ← Identifies which agent hit rate limit
+    "model": "gpt-4o",
+    "agent_id": "asst_abc123xyz",
+    "region": "westus"              // ← Regional capacity issue
+  }
+}
+```
+
+**Debugging Use Case Examples:**
+
+| Issue | What to Check | Solution |
+|-------|---------------|----------|
+| Slow responses from some requests | `region` field | May indicate one region is overloaded; add capacity or adjust APIM routing |
+| Intermittent 429 errors | `agent_route` + `agent_id` | Specific agent may have lower TPM quota; increase quota or redistribute load |
+| Quality variations | `model` + `agent_id` | Compare responses across agents; one may need prompt tuning |
+| Regional compliance violation | `region` field | Audit logs show data processed in wrong region; update geo-routing policy |
+| All requests to one agent | `agent_route` distribution | APIM load balancing broken; check backend pool configuration |
+
+**How Metadata is Added (Implementation):**
+
+The metadata is populated in [`app/main.py`](app/main.py):
+
+```python
+# Environment variable set by Bicep deployment
+AZURE_REGION = os.getenv("AZURE_REGION", "unknown")
+
+# On successful response (line ~133)
+result["metadata"] = {
+    "agent_route": agent_route,      # From URL path (gpt4o_1, gpt4o_2, etc.)
+    "model": model,                  # From agent configuration
+    "agent_id": AGENTS[agent_route]["agent_id"],  # From agent pool
+    "region": AZURE_REGION           # From container environment
+}
+
+# On error response (line ~147)
+"metadata": {
+    "agent_route": agent_route,
+    "model": model,
+    "agent_id": AGENTS.get(agent_route, {}).get("agent_id", "unknown"),
+    "region": AZURE_REGION
+}
+```
+
+The `AZURE_REGION` environment variable is automatically set during deployment via Bicep ([`infra/resources.bicep`](infra/resources.bicep) line ~258):
+
+```bicep
+{
+  name: 'AZURE_REGION'
+  value: location  // Resolves to deployment region (eastus, westus, etc.)
+}
+```
+
+---
+
+## Testing the API
+
+### Testing Direct API Endpoints
+
+**Prerequisites:**
+- Deployed service (local or Azure)
+- Endpoint URL from deployment or `http://localhost:8989` for local
+
+**Basic Health Check:**
+```bash
+# Local
+curl http://localhost:8989/health
+
+# Azure (Container App)
+curl https://ca-vw5lt6yc7noze.eastus.azurecontainerapps.io/health
+```
+
+**Expected Response:**
+```json
+{
+  "status": "ok",
+  "service": "bing-grounding-api",
+  "region": "eastus",
+  "agents_loaded": 5
+}
+```
+
+**Test Query:**
+```bash
+# Local
+curl -X POST "http://localhost:8989/bing-grounding/gpt4o_1?query=What+is+Azure+AI+Foundry?"
+
+# Azure (Container App)
+curl -X POST "https://ca-vw5lt6yc7noze.eastus.azurecontainerapps.io/bing-grounding/gpt4o_1?query=What+is+Azure+AI+Foundry?"
+```
+
+**Expected Response:**
+```json
+{
+  "content": "Azure AI Foundry is Microsoft's unified platform...",
+  "citations": [
+    {
+      "id": 1,
+      "type": "url",
+      "url": "https://azure.microsoft.com/products/ai-studio",
+      "title": "Azure AI Foundry Overview"
+    }
+  ],
+  "metadata": {
+    "agent_route": "gpt4o_1",
+    "model": "gpt-4o",
+    "agent_id": "asst_ElHsNtK1PSFxwha7tLWIFM7T",
+    "region": "eastus"
+  }
+}
+```
+
+---
+
+### Testing MCP Endpoints (Model Context Protocol)
+
+The MCP endpoint provides a standardized interface for AI model consumption through Azure API Management.
+
+#### Prerequisites
+
+1. **APIM Deployment** - API Management must be deployed (included in `azd up`)
+2. **Subscription Key** - Required for APIM authentication
+
+**Get Your Subscription Key:**
+
+```bash
+# Option 1: Azure Portal
+# Navigate to: APIM → Subscriptions → "Built-in all-access subscription" → Show keys
+
+# Option 2: Azure CLI
+az apim subscription show \
+  --resource-group rg-bing-grounding-mcp-dev \
+  --service-name apim-xxxxxx \
+  --sid master \
+  --query primaryKey -o tsv
+```
+
+#### Configure Environment Variables
+
+Add these to your `.env` file:
+
+```bash
+# MCP Server URL (from APIM)
+APIM_MCP_SERVER_URL=https://apim-vw5lt6yc7noze.azure-api.net/bing-grounding-mcp/mcp
+
+# Subscription Key (from APIM portal or CLI)
+APIM_SUBSCRIPTION_KEY=70f2c804e2ee4f749cea4b8ab3246e7e
+```
+
+#### Run MCP Tests
+
+**Using the Test Script:**
+
+```bash
+# Activate virtual environment
+_env_activate.bat
+
+# Run tests
+python test_mcp.py
+```
+
+**Expected Output:**
+
+```
+=== Testing MCP Endpoint ===
+MCP Server URL: https://apim-vw5lt6yc7noze.azure-api.net/bing-grounding-mcp/mcp
+
+Test 1: What are the latest developments in AI?
+RESULT: OK (10.6s)
+  Region: eastus                              ← Azure region that processed request
+  Model: gpt-4o                               ← AI model used for generation
+  Agent Route: gpt4o_2                        ← Agent pool identifier (load balanced)
+  Agent ID: asst_ElHsNtK1PSFxwha7tLWIFM7T     ← Specific agent instance ID
+  Citations: 3                                ← Number of Bing grounding citations
+    [1] AI News December 2025: In-Depth and Concise
+    [2] Recent Developments in Generative AI Research
+    [3] OpenAI Announces GPT-4.5
+
+  Response: During December 2025, several notable advancements have been made in artificial intelligence...
+
+Test 2: What happened in the stock market today?
+RESULT: OK (8.2s)
+  Region: westus                              ← Different region (multi-region load balancing)
+  Model: gpt-4o
+  Agent Route: gpt4o_3                        ← Different agent (load balanced across 5 agents)
+  Agent ID: asst_xyz789...
+  Citations: 4
+    [1] Market Watch - December 17, 2025
+    [2] CNBC Stock Market Update
+    [3] Bloomberg Markets Summary
+    [4] S&P 500 Daily Close
+
+  Response: Today's stock market showed mixed performance, with the S&P 500 closing up 0.3%...
+
+Test 3: Explain quantum computing
+RESULT: OK (12.1s)
+  Region: eastus                              ← Back to eastus (round-robin balancing)
+  Model: gpt-4o
+  Agent Route: gpt4o_1                        ← Cycling through agent pool
+  Agent ID: asst_def456...
+  Citations: 5
+    [1] Quantum Computing Basics - Nature
+    [2] IBM Quantum - Overview
+    [3] Google Quantum AI Research
+    [4] Quantum Algorithms Explained
+    [5] Introduction to Qubits
+
+  Response: Quantum computing is a revolutionary approach to computation that leverages quantum mechanics...
+
+===========================
+Tests completed: 5
+Success: 5 (100%)
+Failed: 0 (0%)
+Average response time: 9.4s
+===========================
+```
+
+**What to Look For in Test Output:**
+
+| Field | What It Tells You | Good ✅ | Bad ❌ |
+|-------|-------------------|---------|--------|
+| **Region** | Geographic distribution | Rotating across regions (eastus, westus) | Always same region; "unknown" |
+| **Agent Route** | Load balancing across agents | Cycling through gpt4o_1 to gpt4o_5 | Always same agent route |
+| **Response Time** | Performance consistency | 5-15 seconds typical | >30 seconds; high variance |
+| **Success Rate** | Overall reliability | 90%+ success | <80% success; frequent failures |
+| **Citations** | Bing grounding quality | 3-5 citations per response | 0 citations; generic answers |
+
+**Example Failed Test (for debugging):**
+
+```
+Test 4: What are the benefits of cloud computing?
+RESULT: FAILED (2.5s) - rate_limit_exceeded
+  Region: westus                              ← Helps isolate regional capacity issues
+  Model: gpt-4o
+  Agent Route: gpt4o_4                        ← This specific agent hit rate limit
+  Agent ID: asst_ghi789...
+  Error: Model deployment TPM limit exceeded  ← Error message
+
+  Action: Increase TPM quota for westus deployment or adjust load balancing
+```
+
+#### Manual MCP Testing with cURL
+
+**Test with Subscription Key Header:**
+
+```bash
+curl -X POST "https://apim-vw5lt6yc7noze.azure-api.net/bing-grounding-mcp/mcp" \
+  -H "Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "bing_grounding",
+      "arguments": {
+        "query": "What is the weather like today?"
+      }
+    },
+    "id": 1
+  }'
+```
+
+**Expected Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Today's weather varies by location. For specific weather information, please check your local forecast. As of December 17, 2025, many regions are experiencing seasonal winter conditions..."
+      }
+    ],
+    "metadata": {
+      "agent_route": "gpt4o_1",               // ← Which agent pool handled request
+      "model": "gpt-4o",                      // ← Model used
+      "agent_id": "asst_ElHsNtK1PSFxwha7tLWIFM7T",  // ← Specific agent instance
+      "region": "eastus"                      // ← Region that processed request
+    }
+  }
+}
+```
+
+**Pretty-Formatted for Debugging:**
+
+```bash
+# Add -v flag to see full request/response headers
+curl -v -X POST "https://apim-vw5lt6yc7noze.azure-api.net/bing-grounding-mcp/mcp" \
+  -H "Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "bing_grounding",
+      "arguments": {
+        "query": "What is Azure AI Foundry?"
+      }
+    },
+    "id": 1
+  }' | jq '.'
+```
+
+**Expected Verbose Output (with debugging info):**
+
+```
+< HTTP/2 200
+< content-type: application/json
+< ocp-apim-trace-location: https://apimst...  ← APIM trace URL (if tracing enabled)
+< x-backend-server: ca-vw5lt6yc7noze         ← Which Container App served request
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Azure AI Foundry is Microsoft's comprehensive platform for building, deploying, and managing AI applications. It provides a unified experience for developing custom AI solutions, integrating with Azure OpenAI Service, and leveraging pre-built AI models..."
+      }
+    ],
+    "citations": [
+      {
+        "id": 1,
+        "type": "url",
+        "url": "https://azure.microsoft.com/en-us/products/ai-studio",
+        "title": "Azure AI Foundry - Microsoft Azure"
+      },
+      {
+        "id": 2,
+        "type": "url",
+        "url": "https://learn.microsoft.com/azure/ai-studio/",
+        "title": "Azure AI Foundry documentation"
+      }
+    ],
+    "metadata": {
+      "agent_route": "gpt4o_2",
+      "model": "gpt-4o",
+      "agent_id": "asst_xyz789abc123def456",
+      "region": "eastus"
+    }
+  }
+}
+```
+
+**Debugging Checklist Using Metadata:**
+
+✅ **Region is correct** - `"eastus"` or expected region (not `"unknown"`)  
+✅ **Agent route is valid** - One of `gpt4o_1` through `gpt4o_5`  
+✅ **Model is expected** - Should be `"gpt-4o"` for all agents  
+✅ **Agent ID is populated** - Long string starting with `asst_`  
+✅ **Citations exist** - Array with Bing search results  
+✅ **Response time acceptable** - Typically 5-15 seconds  
+
+❌ **Region shows "unknown"** - Container App missing AZURE_REGION env var  
+❌ **Same agent every time** - APIM load balancing not working  
+❌ **No citations** - Bing grounding not configured on agent  
+❌ **Agent ID is "unknown"** - Agent pool configuration error
+
+#### Common Testing Issues
+
+**Issue 1: 401 Access Denied**
+
+```json
+{
+  "statusCode": 401,
+  "message": "Access denied due to missing subscription key"
+}
+```
+
+**Solution:** Add subscription key to request headers:
+```bash
+-H "Ocp-Apim-Subscription-Key: YOUR_KEY_HERE"
+```
+
+**Issue 2: Empty Response / No Content**
+
+**Solution:** 
+1. Check MCP server URL is correct
+2. Verify subscription key is valid
+3. Check APIM backend is healthy:
+   ```bash
+   curl https://ca-vw5lt6yc7noze.eastus.azurecontainerapps.io/health
+   ```
+
+**Issue 3: Region Shows "unknown"**
+
+**Solution:** Ensure `AZURE_REGION` environment variable is set in Container App configuration:
+```bash
+azd deploy  # Redeploy to update environment variables
+```
+
+#### Multi-Region Testing
+
+When testing multi-region deployments, observe the `region` field to verify load balancing:
+
+```bash
+# Run multiple tests to see region rotation
+for i in {1..10}; do
+  echo "Test $i:"
+  curl -s -X POST "https://apim-xxx.azure-api.net/bing-grounding-mcp/mcp" \
+    -H "Ocp-Apim-Subscription-Key: YOUR_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"bing_grounding","arguments":{"query":"test"}},"id":'$i'}' \
+    | jq -r '.result.metadata.region'
+done
+```
+
+**Expected Output (with 2 regions):**
+```
+Test 1: eastus           ← First request to East US
+Test 2: westus           ← Load balanced to West US
+Test 3: eastus           ← Round-robin back to East US
+Test 4: westus
+Test 5: eastus
+Test 6: westus
+Test 7: eastus
+Test 8: westus
+Test 9: eastus
+Test 10: westus
+```
+
+**Extract Full Metadata for Analysis:**
+
+```bash
+# Get complete metadata from multiple requests
+for i in {1..5}; do
+  echo "=== Request $i ==="
+  curl -s -X POST "https://apim-xxx.azure-api.net/bing-grounding-mcp/mcp" \
+    -H "Ocp-Apim-Subscription-Key: YOUR_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"bing_grounding","arguments":{"query":"test query"}},"id":'$i'}' \
+    | jq '.result.metadata'
+  echo ""
+done
+```
+
+**Expected Output:**
+```json
+=== Request 1 ===
+{
+  "agent_route": "gpt4o_1",                    ← Agent pool #1
+  "model": "gpt-4o",
+  "agent_id": "asst_ElHsNtK1PSFxwha7tLWIFM7T",
+  "region": "eastus"                           ← East US region
+}
+
+=== Request 2 ===
+{
+  "agent_route": "gpt4o_3",                    ← Different agent (load balanced)
+  "model": "gpt-4o",
+  "agent_id": "asst_Abc123Xyz789Def456Ghi",
+  "region": "westus"                           ← West US region
+}
+
+=== Request 3 ===
+{
+  "agent_route": "gpt4o_2",                    ← Third agent
+  "model": "gpt-4o",
+  "agent_id": "asst_Qrs789Tuv012Wxy345Zab",
+  "region": "eastus"                           ← Back to East US
+}
+
+=== Request 4 ===
+{
+  "agent_route": "gpt4o_5",                    ← Fifth agent
+  "model": "gpt-4o",
+  "agent_id": "asst_Mno456Pqr789Stu012Vwx",
+  "region": "westus"                           ← Back to West US
+}
+
+=== Request 5 ===
+{
+  "agent_route": "gpt4o_4",                    ← Fourth agent
+  "model": "gpt-4o",
+  "agent_id": "asst_Cde345Fgh678Ijk901Lmn",
+  "region": "eastus"                           ← East US again
+}
+```
+
+**What This Shows:**
+- ✅ **Region distribution** - Requests are being balanced across eastus and westus
+- ✅ **Agent distribution** - Different agent routes (gpt4o_1 through gpt4o_5)
+- ✅ **Unique agents** - Each agent_id is different
+- ✅ **Consistent model** - All using gpt-4o
+
+**Track Distribution Over Time:**
+
+```bash
+# Run 50 requests and count region distribution
+echo "Testing 50 requests across regions..."
+for i in {1..50}; do
+  curl -s -X POST "https://apim-xxx.azure-api.net/bing-grounding-mcp/mcp" \
+    -H "Ocp-Apim-Subscription-Key: YOUR_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"bing_grounding","arguments":{"query":"test"}},"id":'$i'}' \
+    | jq -r '.result.metadata.region'
+done | sort | uniq -c
+```
+
+**Expected Output:**
+```
+     25 eastus          ← 50% of requests (good distribution)
+     25 westus          ← 50% of requests (good distribution)
+```
+
+**If distribution is uneven:**
+```
+     45 eastus          ← 90% to one region
+      5 westus          ← Only 10% to other region
+```
+
+**Possible causes:**
+- APIM backend health checks marking one region unhealthy
+- Circuit breaker tripped for one region
+- Backend pool weights configured unevenly
+- DNS caching or sticky sessions
+
+#### Performance Testing
+
+**Load test with multiple concurrent requests:**
+
+```bash
+# Install dependencies
+pip install aiohttp asyncio
+
+# Run load test (included in test_mcp.py)
+python test_mcp.py --concurrent 10 --iterations 100
+```
+
+**Monitor:**
+- Response times
+- Success rate
+- Region distribution
+- Citation quality
+
+---
 
 ## Azure AI Agent Configuration
 
