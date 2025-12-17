@@ -1,11 +1,13 @@
 # Bing Grounding API
 
-A FastAPI-based wrapper for Azure AI Agent Service with Bing grounding capabilities. This service provides a REST API for performing web searches with AI-powered grounding and automatic citation extraction.
+A FastAPI-based REST API and Model Context Protocol (MCP) server for Azure AI Agent Service with Bing grounding capabilities. Provides grounded AI responses with automatic citation extraction through both REST and MCP interfaces.
 
 ## Features
 
-✅ REST API wrapper for Azure AI Agent with Bing grounding  
+✅ **REST API** wrapper for Azure AI Agent with Bing grounding  
+✅ **Model Context Protocol (MCP) server** via Azure API Management  
 ✅ Structured JSON responses with citations  
+✅ Region tracking metadata for multi-region deployments  
 ✅ Docker containerization for easy deployment  
 ✅ Health check endpoint  
 ✅ Azure Container Apps ready  
@@ -14,7 +16,8 @@ A FastAPI-based wrapper for Azure AI Agent Service with Bing grounding capabilit
 ✅ **Session affinity (sticky sessions)**  
 ✅ **Automatic failover and recovery**  
 ✅ **Automated deployment with Azure Developer CLI (azd)**  
-✅ **12 AI agents created automatically during provisioning**
+✅ **12 AI agents created automatically during provisioning**  
+✅ **MCP endpoint for standardized AI tool integration**
 
 ---
 
