@@ -5,5 +5,7 @@
   "appManagedEnvironments": "cae-",
   "appContainerApps": "ca-",
   "containerRegistryRegistries": "acr",
-  "bingAccounts": "bing-"
+  "bingAccounts": "bing-",
+  "webServerFarms": "asp-",
+  "webSitesAppService": "app-"
 }

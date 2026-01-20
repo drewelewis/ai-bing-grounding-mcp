@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.36.1.42791",
-      "templateHash": "11820169227914938248"
+      "version": "0.39.26.7824",
+      "templateHash": "2638947758550764231"
     }
   },
   "parameters": {
@@ -80,6 +80,20 @@
         "description": "Container image to deploy. If empty, uses default."
       }
     },
+    "appServicePlanName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the App Service Plan. If empty, a name will be generated."
+      }
+    },
+    "webAppName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Name of the Web App. If empty, a name will be generated."
+      }
+    },
     "agentPoolSizeGpt41": {
       "type": "int",
       "defaultValue": 0,
@@ -137,7 +151,10 @@
       "cognitiveServicesAccounts": "ai-",
       "appManagedEnvironments": "cae-",
       "appContainerApps": "ca-",
-      "containerRegistryRegistries": "acr"
+      "containerRegistryRegistries": "acr",
+      "bingAccounts": "bing-",
+      "webServerFarms": "asp-",
+      "webSitesAppService": "app-"
     },
     "abbrs": "[variables('$fxv#0')]",
     "resourceToken": "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]",
@@ -150,7 +167,9 @@
     "finalProjectName": "[if(not(empty(parameters('projectName'))), parameters('projectName'), format('{0}proj-{1}', variables('abbrs').cognitiveServicesAccounts, variables('resourceToken')))]",
     "finalContainerAppEnvName": "[if(not(empty(parameters('containerAppEnvName'))), parameters('containerAppEnvName'), format('{0}{1}', variables('abbrs').appManagedEnvironments, variables('resourceToken')))]",
     "finalContainerAppName": "[if(not(empty(parameters('containerAppName'))), parameters('containerAppName'), format('{0}{1}', variables('abbrs').appContainerApps, variables('resourceToken')))]",
-    "finalContainerRegistryName": "[if(not(empty(parameters('containerRegistryName'))), parameters('containerRegistryName'), format('{0}{1}', variables('abbrs').containerRegistryRegistries, variables('resourceToken')))]"
+    "finalContainerRegistryName": "[if(not(empty(parameters('containerRegistryName'))), parameters('containerRegistryName'), format('{0}{1}', variables('abbrs').containerRegistryRegistries, variables('resourceToken')))]",
+    "finalAppServicePlanName": "[if(not(empty(parameters('appServicePlanName'))), parameters('appServicePlanName'), format('{0}{1}', variables('abbrs').webServerFarms, variables('resourceToken')))]",
+    "finalWebAppName": "[if(not(empty(parameters('webAppName'))), parameters('webAppName'), format('{0}{1}', variables('abbrs').webSitesAppService, variables('resourceToken')))]"
   },
   "resources": [
     {
@@ -162,7 +181,7 @@
     },
     {
       "type": "Microsoft.Resources/deployments",
-      "apiVersion": "2022-09-01",
+      "apiVersion": "2025-04-01",
       "name": "resources",
       "resourceGroup": "[variables('finalResourceGroupName')]",
       "properties": {
@@ -226,8 +245,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.36.1.42791",
-              "templateHash": "3662936306234845478"
+              "version": "0.39.26.7824",
+              "templateHash": "12147615823282611604"
             }
           },
           "parameters": {
@@ -616,6 +635,10 @@
                         {
                           "name": "AZURE_AI_PROJECT_NAME",
                           "value": "[parameters('projectName')]"
+                        },
+                        {
+                          "name": "AZURE_REGION",
+                          "value": "[parameters('location')]"
                         }
                       ]
                     }
@@ -684,10 +707,12 @@
                 "path": "bing-grounding",
                 "protocols": [
                   "https"
-                ]
+                ],
+                "serviceUrl": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2023-05-01').configuration.ingress.fqdn)]"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.ApiManagement/service', parameters('apimServiceName'))]"
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apimServiceName'))]",
+                "[resourceId('Microsoft.App/containerApps', parameters('containerAppName'))]"
               ]
             },
             {
@@ -725,7 +750,7 @@
                       "name": "model",
                       "type": "string",
                       "required": false,
-                      "defaultValue": "gpt-5",
+                      "defaultValue": "gpt-4o",
                       "description": "AI model to use (gpt-5, gpt-5-mini, gpt-4o, gpt-4, gpt-35-turbo)"
                     }
                   ]
@@ -739,9 +764,9 @@
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[format('Microsoft.CognitiveServices/accounts/{0}/projects/{1}', parameters('foundryName'), parameters('projectName'))]",
-              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName')), resourceId('Microsoft.App/containerApps', parameters('containerAppName')), 'AzureAIDeveloper')]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryName'), parameters('projectName')), resourceId('Microsoft.App/containerApps', parameters('containerAppName')), 'AzureAIUser', 'containerapp')]",
               "properties": {
-                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee')]",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
                 "principalId": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2023-05-01', 'full').identity.principalId]",
                 "principalType": "ServicePrincipal"
               },
@@ -770,7 +795,7 @@
             },
             "projectEndpoint": {
               "type": "string",
-              "value": "[format('https://{0}', reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryName')), '2025-04-01-preview').endpoint)]"
+              "value": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('foundryName'), parameters('projectName'))]"
             },
             "projectResourceId": {
               "type": "string",
@@ -806,6 +831,231 @@
       "dependsOn": [
         "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('finalResourceGroupName'))]"
       ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "appservice",
+      "resourceGroup": "[variables('finalResourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          },
+          "appServicePlanName": {
+            "value": "[variables('finalAppServicePlanName')]"
+          },
+          "webAppName": {
+            "value": "[variables('finalWebAppName')]"
+          },
+          "foundryEndpoint": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.projectEndpoint.value]"
+          },
+          "projectName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.projectName.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "7062272770275473312"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object"
+            },
+            "appServicePlanName": {
+              "type": "string"
+            },
+            "webAppName": {
+              "type": "string"
+            },
+            "foundryEndpoint": {
+              "type": "string"
+            },
+            "projectName": {
+              "type": "string"
+            },
+            "containerRegistryName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "pythonVersion": {
+              "type": "string",
+              "defaultValue": "3.11"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2022-09-01",
+              "name": "[parameters('appServicePlanName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "B1",
+                "tier": "Basic"
+              },
+              "kind": "linux",
+              "properties": {
+                "reserved": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2022-09-01",
+              "name": "[parameters('webAppName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(parameters('tags'), createObject('azd-service-name', 'appservice'))]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+                "httpsOnly": true,
+                "siteConfig": {
+                  "linuxFxVersion": "[format('PYTHON|{0}', parameters('pythonVersion'))]",
+                  "appCommandLine": "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4",
+                  "alwaysOn": true,
+                  "ftpsState": "Disabled",
+                  "minTlsVersion": "1.2",
+                  "appSettings": [
+                    {
+                      "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+                      "value": "true"
+                    },
+                    {
+                      "name": "ENABLE_ORYX_BUILD",
+                      "value": "true"
+                    },
+                    {
+                      "name": "AZURE_AI_PROJECT_ENDPOINT",
+                      "value": "[parameters('foundryEndpoint')]"
+                    },
+                    {
+                      "name": "AZURE_AI_PROJECT_NAME",
+                      "value": "[parameters('projectName')]"
+                    },
+                    {
+                      "name": "AZURE_REGION",
+                      "value": "[parameters('location')]"
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "webAppName": {
+              "type": "string",
+              "value": "[parameters('webAppName')]"
+            },
+            "webAppHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-09-01').defaultHostName]"
+            },
+            "webAppEndpoint": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-09-01').defaultHostName)]"
+            },
+            "webAppPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-09-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('finalResourceGroupName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "webapp-role-assignment",
+      "resourceGroup": "[variables('finalResourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "projectResourceId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.projectResourceId.value]"
+          },
+          "webAppPrincipalId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'appservice'), '2025-04-01').outputs.webAppPrincipalId.value]"
+          },
+          "foundryName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.foundryName.value]"
+          },
+          "projectName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.projectName.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "920688401630877600"
+            }
+          },
+          "parameters": {
+            "projectResourceId": {
+              "type": "string"
+            },
+            "webAppPrincipalId": {
+              "type": "string"
+            },
+            "foundryName": {
+              "type": "string"
+            },
+            "projectName": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}/projects/{1}', parameters('foundryName'), parameters('projectName'))]",
+              "name": "[guid(parameters('projectResourceId'), parameters('webAppPrincipalId'), 'AzureAIUser', 'webapp')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+                "principalId": "[parameters('webAppPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'appservice')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('finalResourceGroupName'))]"
+      ]
     }
   ],
   "outputs": {
@@ -819,47 +1069,55 @@
     },
     "AZURE_APIM_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.apimName.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.apimName.value]"
     },
     "AZURE_APIM_GATEWAY_URL": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.apimGatewayUrl.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.apimGatewayUrl.value]"
     },
     "AZURE_FOUNDRY_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.foundryName.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.foundryName.value]"
     },
     "AZURE_AI_PROJECT_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.projectName.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.projectName.value]"
     },
     "AZURE_AI_PROJECT_ENDPOINT": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.projectEndpoint.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.projectEndpoint.value]"
     },
     "AZURE_AI_PROJECT_RESOURCE_ID": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.projectResourceId.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.projectResourceId.value]"
     },
     "AZURE_OPENAI_MODEL_GPT4O": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.gpt4oDeploymentName.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.gpt4oDeploymentName.value]"
     },
     "AZURE_CONTAINER_REGISTRY_ENDPOINT": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.containerRegistryEndpoint.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.containerRegistryEndpoint.value]"
     },
     "AZURE_CONTAINER_REGISTRY_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.containerRegistryName.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.containerRegistryName.value]"
     },
     "AZURE_CONTAINER_APP_ENDPOINT": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.containerAppEndpoint.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.containerAppEndpoint.value]"
     },
     "AZURE_CONTAINER_APP_NAME": {
       "type": "string",
-      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2022-09-01').outputs.containerAppName.value]"
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'resources'), '2025-04-01').outputs.containerAppName.value]"
+    },
+    "AZURE_WEBAPP_NAME": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'appservice'), '2025-04-01').outputs.webAppName.value]"
+    },
+    "AZURE_WEBAPP_ENDPOINT": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('finalResourceGroupName')), 'Microsoft.Resources/deployments', 'appservice'), '2025-04-01').outputs.webAppEndpoint.value]"
     },
     "AZURE_BING_CONNECTION_ID": {
       "type": "string",

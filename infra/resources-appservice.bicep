@@ -3,10 +3,6 @@ param tags object
 param apimServiceName string
 param foundryName string
 param projectName string
-param containerAppEnvName string
-param containerAppName string
-param containerRegistryName string
-param containerImage string
 
 // Model pool sizes from .env (passed via main.bicep)
 param agentPoolSizeGpt41 int = 0
@@ -77,23 +73,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   }
 }
 
-// Container Registry
-resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: containerRegistryName
-  location: location
-  tags: tags
-  sku: {
-    name: 'Basic'
-  }
-  properties: {
-    adminUserEnabled: true
-    publicNetworkAccess: 'Enabled'
-  }
-}
-
 // Microsoft Foundry Resource (replaces AI Hub + Azure OpenAI)
-// This is the new GA resource type for Azure AI Foundry
-// Includes built-in Azure OpenAI capabilities
 resource foundry 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = {
   name: foundryName
   location: location
@@ -106,18 +86,14 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = {
   }
   kind: 'AIServices'
   properties: {
-    // Required to work in AI Foundry portal
     allowProjectManagement: true
-    // Defines developer API endpoint subdomain
     customSubDomainName: foundryName
-    // Use Azure AD authentication instead of keys
     disableLocalAuth: true
     publicNetworkAccess: 'Enabled'
   }
 }
 
-// Foundry Project (replaces hub-based AI Project)
-// Projects group inputs/outputs for one use case, including files and conversation history
+// Foundry Project
 resource project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = {
   name: projectName
   parent: foundry
@@ -274,111 +250,6 @@ resource deploymentGpt35Turbo 'Microsoft.CognitiveServices/accounts/deployments@
   ]
 }
 
-// Bing Grounding Resource - MUST BE CREATED MANUALLY
-// Due to API limitations, create via Azure Portal:
-// https://portal.azure.com/#create/Microsoft.BingGroundingSearch
-// Resource must be in the same resource group as the AI Foundry project
-// The agents will automatically connect to it at runtime
-
-// Container App Environment
-resource containerAppEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
-  name: containerAppEnvName
-  location: location
-  tags: tags
-  properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: logAnalytics.properties.customerId
-        sharedKey: logAnalytics.listKeys().primarySharedKey
-      }
-    }
-  }
-}
-
-// Primary Container App (azd deploys to this one)
-resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
-  name: containerAppName
-  location: location
-  tags: union(tags, {
-    'azd-service-name': 'api'
-  })
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    managedEnvironmentId: containerAppEnv.id
-    configuration: {
-      ingress: {
-        external: true
-        targetPort: 8989
-        transport: 'auto'
-      }
-      registries: [
-        {
-          server: containerRegistry.properties.loginServer
-          username: containerRegistry.listCredentials().username
-          passwordSecretRef: 'registry-password'
-        }
-      ]
-      secrets: [
-        {
-          name: 'registry-password'
-          value: containerRegistry.listCredentials().passwords[0].value
-        }
-      ]
-    }
-    template: {
-      containers: [
-        {
-          name: 'bing-grounding-api'
-          image: containerImage
-          resources: {
-            cpu: json('0.5')
-            memory: '1Gi'
-          }
-          env: [
-            {
-              name: 'AZURE_AI_PROJECT_ENDPOINT'
-              value: 'https://${foundry.properties.endpoint}'
-            }
-            {
-              name: 'AZURE_AI_PROJECT_NAME'
-              value: project.name
-            }
-          ]
-        }
-      ]
-      scale: {
-        minReplicas: 1
-        maxReplicas: 10
-        rules: [
-          {
-            name: 'cpu-scaling'
-            custom: {
-              type: 'cpu'
-              metadata: {
-                type: 'Utilization'
-                value: '70'
-              }
-            }
-          }
-          {
-            name: 'memory-scaling'
-            custom: {
-              type: 'memory'
-              metadata: {
-                type: 'Utilization'
-                value: '80'
-              }
-            }
-          }
-        ]
-      }
-    }
-  }
-}
-
 // API Management Service
 resource apim 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
   name: apimServiceName
@@ -397,75 +268,6 @@ resource apim 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
   }
 }
 
-// API in APIM
-resource api 'Microsoft.ApiManagement/service/apis@2023-05-01-preview' = {
-  parent: apim
-  name: 'bing-grounding-api'
-  properties: {
-    displayName: 'Bing Grounding API'
-    apiRevision: '1'
-    subscriptionRequired: true
-    path: 'bing-grounding'
-    protocols: ['https']
-    serviceUrl: 'https://${containerApp.properties.configuration.ingress.fqdn}'
-  }
-}
-
-// Health endpoint operation
-resource healthOperation 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
-  parent: api
-  name: 'health'
-  properties: {
-    displayName: 'Health Check'
-    method: 'GET'
-    urlTemplate: '/health'
-    description: 'Health check endpoint'
-  }
-}
-
-// Bing grounding endpoint operation
-resource bingGroundingOperation 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
-  parent: api
-  name: 'bing-grounding'
-  properties: {
-    displayName: 'Bing Grounding'
-    method: 'POST'
-    urlTemplate: '/bing-grounding'
-    description: 'Query with Bing grounding and citations. Supports gpt-5, gpt-5-mini, gpt-4o, gpt-4, gpt-35-turbo.'
-    request: {
-      queryParameters: [
-        {
-          name: 'query'
-          type: 'string'
-          required: true
-          description: 'The query to process'
-        }
-        {
-          name: 'model'
-          type: 'string'
-          required: false
-          defaultValue: 'gpt-4o'
-          description: 'AI model to use (gpt-5, gpt-5-mini, gpt-4o, gpt-4, gpt-35-turbo)'
-        }
-      ]
-    }
-  }
-}
-
-// Grant primary Container App managed identity access to Foundry Project
-// Use Azure AI User role which has Microsoft.CognitiveServices/* dataActions (includes agents/read)
-resource roleAssignmentPrimary 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(project.id, containerApp.id, 'AzureAIUser', 'containerapp')
-  scope: project
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d') // Azure AI User
-    principalId: containerApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Bing Grounding role assignments not needed - built-in tool
-
 // Outputs
 output apimName string = apim.name
 output apimGatewayUrl string = apim.properties.gatewayUrl
@@ -473,7 +275,6 @@ output foundryName string = foundry.name
 output projectName string = project.name
 output projectEndpoint string = 'https://${foundryName}.services.ai.azure.com/api/projects/${projectName}'
 output projectResourceId string = project.id
-// Output deployed model names (dynamically built from conditional deployments)
 output gpt4oDeploymentName string = agentPoolSizeGpt4o > 0 ? 'gpt-4o' : (agentPoolSizeGpt41 > 0 ? 'gpt-4.1' : 'gpt-4o')
 output deployedModels array = concat(
   agentPoolSizeGpt41 > 0 ? ['gpt-4.1'] : [],
@@ -484,7 +285,3 @@ output deployedModels array = concat(
   agentPoolSizeGpt4 > 0 ? ['gpt-4'] : [],
   agentPoolSizeGpt35Turbo > 0 ? ['gpt-35-turbo'] : []
 )
-output containerRegistryName string = containerRegistry.name
-output containerRegistryEndpoint string = containerRegistry.properties.loginServer
-output containerAppEndpoint string = containerApp.properties.configuration.ingress.fqdn
-output containerAppName string = containerAppName

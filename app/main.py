@@ -1,9 +1,13 @@
 import json
 import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from agents.agent_pool import get_all_agent_ids
 from agents.bing_grounding import BingGroundingAgent
+
+# Load .env file before reading environment variables
+load_dotenv()
 
 app = FastAPI(
     title="Bing Grounding API",
@@ -18,11 +22,13 @@ class QueryRequest(BaseModel):
 # Discover all agents on startup
 AGENTS = {}
 PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-AZURE_REGION = os.getenv("AZURE_REGION", "unknown")
+# REGION_NAME is auto-set by Azure App Service (e.g., "East US")
+# Falls back to "local" for local development
+AZURE_REGION = os.getenv("REGION_NAME") or os.getenv("AZURE_REGION", "local")
 
 @app.on_event("startup")
 def startup_event():
-    """Discover all agents from environment variables on startup"""
+    """Discover and register all Bing agents from Azure AI Foundry project on startup"""
     if not PROJECT_ENDPOINT:
         print("⚠️  Warning: AZURE_AI_PROJECT_ENDPOINT not set")
         return
@@ -30,7 +36,7 @@ def startup_event():
     all_agents = get_all_agent_ids()
     
     if not all_agents:
-        print("⚠️  Warning: No agents found in environment variables")
+        print("⚠️  Warning: No Bing agents found in project")
         return
     
     # Create agent instance for each discovered agent
@@ -93,6 +99,35 @@ async def list_agents():
     }
 
 
+# Valid model patterns for validation (models that support Bing grounding)
+VALID_MODEL_PATTERNS = [
+    "gpt-4o", "gpt-4", "gpt-4.1-mini", "gpt-4-turbo",
+    "gpt-35-turbo", "gpt-3.5-turbo"
+]
+
+
+def validate_model_and_query(query: str, model: str):
+    """Validate that query and model parameters aren't swapped."""
+    # Check if model looks like a question (contains spaces or question marks)
+    if " " in model or "?" in model:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model '{model}'. It looks like you swapped 'query' and 'model' parameters. "
+                   f"Use: ?query=your+question&model=gpt-4o"
+        )
+    
+    # Check if query looks like a model name
+    query_lower = query.lower().replace(" ", "")
+    for valid_model in VALID_MODEL_PATTERNS:
+        if query_lower == valid_model.replace("-", "").replace(".", ""):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid query '{query}'. It looks like a model name. "
+                       f"Did you swap 'query' and 'model' parameters? "
+                       f"Use: ?query=your+question&model={query}"
+            )
+
+
 @app.post("/bing-grounding")
 async def bing_grounding_with_model(query: str, model: str = "gpt-4o"):
     """
@@ -100,17 +135,22 @@ async def bing_grounding_with_model(query: str, model: str = "gpt-4o"):
     
     Args:
         query: Search query string
-        model: Model to use (gpt-5, gpt-5-mini, gpt-4o, gpt-4, gpt-35-turbo). Defaults to gpt-4o
+        model: Model to use (gpt-4o, gpt-4.1-mini, gpt-4, gpt-35-turbo). Defaults to gpt-4o
         
     Returns:
         JSON response with content and citations
         
+    Note:
+        Multi-region scaling is handled by APIM geo-routing, not agent pooling.
+        Each region has 1 agent per model type.
+        
     Example:
         POST /bing-grounding?query=What+is+Azure&model=gpt-4o
     """
-    import random
+    # Validate parameters aren't swapped
+    validate_model_and_query(query, model)
     
-    # Find all agents for the requested model
+    # Find the agent for the requested model (1 per model in multi-region setup)
     model_agents = [route for route, info in AGENTS.items() if info["model"] == model]
     
     if not model_agents:
@@ -122,8 +162,9 @@ async def bing_grounding_with_model(query: str, model: str = "gpt-4o"):
                 detail=f"No agents available for model '{model}' or fallback model 'gpt-4o'"
             )
     
-    # Randomly select one agent from the model pool
-    agent_route = random.choice(model_agents)
+    # Select the agent (single agent per model in multi-region setup)
+    # If multiple exist (legacy config), take the first one
+    agent_route = model_agents[0]
     
     try:
         agent_instance = AGENTS[agent_route]["instance"]
@@ -155,7 +196,7 @@ async def bing_grounding_specific_agent(agent_route: str, request: QueryRequest)
     Endpoint for specific Bing grounding agent by route.
     
     Args:
-        agent_route: Agent route (e.g., "gpt4o_1", "gpt5_2")
+        agent_route: Agent route (e.g., "gpt4o_1", "gpt41mini_1")
         request: Query request body
         
     Returns:
@@ -163,9 +204,7 @@ async def bing_grounding_specific_agent(agent_route: str, request: QueryRequest)
         
     Example routes:
         POST /bing-grounding/gpt4o_1
-        POST /bing-grounding/gpt4o_2
-        POST /bing-grounding/gpt5_1
-        POST /bing-grounding/gpt5_2
+        POST /bing-grounding/gpt41mini_1
     """
     if agent_route not in AGENTS:
         raise HTTPException(

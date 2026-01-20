@@ -176,18 +176,22 @@ def main():
     # GPT-5 series REMOVED - does not support Bing grounding tool (uses Responses API only)
     # o-series REMOVED - reasoning models use different API
     # NOTE: pool_size_env must match camelCase parameter names in .azure/{env}/.env
+    # 
+    # MULTI-REGION NOTE: Use 1 agent per model per region.
+    # Regional APIM routing provides throughput scaling, not agent pooling.
     model_configs = [
-        # GPT-4o series
-        {"name": "gpt-4o", "key": "GPT4O", "pool_size_env": "agentPoolSizeGpt4o", "default_size": 0},
+        # GPT-4o series - recommended: 1 per region
+        {"name": "gpt-4o", "key": "GPT4O", "pool_size_env": "agentPoolSizeGpt4o", "default_size": 1},
         
-        # GPT-4 series
+        # GPT-4.1-mini - recommended: 1 per region  
+        {"name": "gpt-4.1-mini", "key": "GPT41_MINI", "pool_size_env": "agentPoolSizeGpt41Mini", "default_size": 1},
+        
+        # GPT-4 series - optional
         {"name": "gpt-4", "key": "GPT4", "pool_size_env": "agentPoolSizeGpt4", "default_size": 0},
-        {"name": "gpt-4-32k", "key": "GPT4_32K", "pool_size_env": "agentPoolSizeGpt4_32k", "default_size": 0},
         {"name": "gpt-4-turbo", "key": "GPT4_TURBO", "pool_size_env": "agentPoolSizeGpt4Turbo", "default_size": 0},
         
-        # GPT-3.5 series
+        # GPT-3.5 series - optional
         {"name": "gpt-35-turbo", "key": "GPT35_TURBO", "pool_size_env": "agentPoolSizeGpt35Turbo", "default_size": 0},
-        {"name": "gpt-35-turbo-16k", "key": "GPT35_TURBO_16K", "pool_size_env": "agentPoolSizeGpt35Turbo16k", "default_size": 0},
     ]
     
     # Read pool sizes from environment

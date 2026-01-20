@@ -30,7 +30,7 @@ async def run_single_test(test_num, query):
         if subscription_key:
             headers["Ocp-Apim-Subscription-Key"] = subscription_key
         
-        async with httpx.AsyncClient(timeout=120.0, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=150.0, headers=headers) as client:  # Increased timeout
             async with streamable_http_client(url, http_client=client) as (read, write, _):
                 async with ClientSession(read, write) as session:
                     
@@ -47,7 +47,7 @@ async def run_single_test(test_num, query):
                                 "query": query
                             }
                         ),
-                        timeout=60.0
+                        timeout=90.0  # Increased from 60s to 90s for complex queries
                     )
                     
                     elapsed = time.time() - start_time
@@ -146,11 +146,35 @@ async def run_single_test(test_num, query):
     except asyncio.TimeoutError:
         elapsed = time.time() - start_time
         print(f"RESULT: TIMEOUT ({elapsed:.1f}s)")
+        print(f"  Query: {query}")
+        print(f"  URL: {url}")
+        return False
+    except ExceptionGroup as eg:
+        elapsed = time.time() - start_time
+        print(f"RESULT: FAILED ({elapsed:.1f}s) - ExceptionGroup")
+        print(f"  Number of exceptions: {len(eg.exceptions)}")
+        for i, exc in enumerate(eg.exceptions, 1):
+            print(f"  Exception {i}: {type(exc).__name__}")
+            print(f"    Message: {str(exc)[:300]}")
+            # Print traceback info for better debugging
+            import traceback
+            tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+            print(f"    Traceback (last 5 lines):")
+            for line in tb_lines[-5:]:
+                print(f"      {line.strip()}")
         return False
     except Exception as e:
         elapsed = time.time() - start_time
         print(f"RESULT: FAILED ({elapsed:.1f}s) - {type(e).__name__}")
-        print(f"  Error: {str(e)[:200]}")
+        print(f"  Error: {str(e)[:300]}")
+        print(f"  Query: {query}")
+        print(f"  URL: {url}")
+        # Print full traceback for debugging
+        import traceback
+        print(f"  Traceback:")
+        tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
+        for line in tb_lines[-10:]:
+            print(f"    {line.strip()}")
         return False
 
 

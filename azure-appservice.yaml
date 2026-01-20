@@ -2,6 +2,11 @@ name: bing-grounding-api
 metadata:
   template: bing-grounding-api@0.0.1-beta
 
+infra:
+  provider: bicep
+  path: infra
+  module: main-appservice.bicep
+
 # Root-level hooks run for ALL azd commands
 hooks:
   preprovision:
@@ -31,36 +36,16 @@ services:
   api:
     project: .
     language: py
-    host: containerapp
-    hooks:
-      postdeploy:
-        windows:
-          shell: pwsh
-          run: python scripts/postdeploy_update_container_apps.py ; python scripts/postprovision_configure_mcp.py
-          continueOnError: false
-          interactive: true
-        posix:
-          shell: sh
-          run: python scripts/postdeploy_update_container_apps.py && python scripts/postprovision_configure_mcp.py
-          continueOnError: false
-          interactive: true
-  appservice:
-    project: .
-    language: py
     host: appservice
     hooks:
       postdeploy:
         windows:
           shell: pwsh
-          run: python scripts/postdeploy_configure_appservice.py
+          run: python scripts/postdeploy_configure_appservice.py ; python scripts/postprovision_configure_mcp.py
           continueOnError: false
           interactive: true
         posix:
           shell: sh
-          run: python scripts/postdeploy_configure_appservice.py
+          run: python scripts/postdeploy_configure_appservice.py && python scripts/postprovision_configure_mcp.py
           continueOnError: false
           interactive: true
-
-# Default environment (optional - azd will prompt if not set)
-# You can override this by setting AZURE_ENV_NAME environment variable
-# or using: azd env select <env-name>
